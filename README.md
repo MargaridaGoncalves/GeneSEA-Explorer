@@ -1,7 +1,7 @@
 
 <h1 align="center">
   <br>
-  <img src="https://github.com/MargaridaGoncalves/Shiny-App/blob/main/GeneSEA%20Explorer/official_banner.png" width="2000"></a>
+  <img src="https://github.com/MargaridaGoncalves/GeneSEA-Explorer/blob/main/official_banner.png" width="2000"></a>
   <br>
 
   
