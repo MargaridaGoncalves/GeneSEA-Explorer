@@ -10,6 +10,9 @@
 The GeneSEA Explorer is an innovative bioinformatics tool for conducting differential gene expression, using SEA. Its user-friendly interface enables users to effortlessly explore
 and analyze diverse DEGs outputs and to conduct functional enrichment analysis. The innovative use of Shannon entropy to aggregate all DEGs outputs provides an informative selection of DEGs, enhancing researchers’ understanding of their RNA-Seq data results and minimizing challenges for researchers less confident in this domain.
 
+
+More info on the usage of the application and some examples are detailed in the [GeneSEA Explorer User's Guide](https://github.com/MargaridaGoncalves/GeneSEA-Explorer/blob/main/GeneSEA%20Explorer%20Users%20Guide.pdf)
+
 ## Set Up
 
 ### R Session
