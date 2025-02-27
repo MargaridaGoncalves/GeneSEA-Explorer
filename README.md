@@ -19,7 +19,7 @@ More info on the usage of the application and some examples are detailed in the 
 
 
 > [!WARNING]  
-> GeneSEA Explorer currently only supports version 4.3.3 of R. The current R version 4.4.1 is still not supported.
+> GeneSEA Explorer currently supports version 4.3.3 and up to the current the R version 4.4.2.
 
 > [!IMPORTANT]  
 > In RStudio open the Session in the GeneSEA Explorer folder.  
