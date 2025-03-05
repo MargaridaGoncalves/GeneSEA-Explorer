@@ -2,6 +2,7 @@ library(ggplot2)
 library(shiny)
 library(DT)
 library(plotly)
+library(gridExtra)
 library(dplyr)
 library(DESeq2)
 library(readxl)
@@ -9083,94 +9084,173 @@ server <- function(input, output) {
     req(infile)
     
     if (infile == "Deseq2") {
-      DataForVolcano <- 
-        ggplot(data=resdeseq11(), aes(x=log2FoldChange, y=-log10(padj), color = regulated, text = RefSeq)) + geom_point() + theme_minimal() + scale_color_manual(values = c("down" ="#9370DB", "Not differentially expressed"= "#E0EEEE", "up" = "#FFA54F")) + theme(legend.position = "none") # + geom_text(label=res11()$RefSeq, nudge_x=0.85, nudge_y=0.2, check_overlap=T) 
+
+      Data <- plot_ly(data = resdeseq11(), 
+                      x = ~log2FoldChange, 
+                      y = ~(-log10(padj)), 
+                      color = ~regulated, 
+                      colors = c("down" = "#9370DB", 
+                                 "Not differentially expressed" = "#E0EEEE", 
+                                 "up" = "#FFA54F"),
+                      text = ~RefSeq, 
+                      type = 'scatter', 
+                      mode = 'markers',
+                      marker = list(size = 7)) %>%
+        layout(title = "Volcano Plot",
+               xaxis = list(title = "log2 Fold Change"),
+               yaxis = list(title = "-log10(padj)"),
+               showlegend = TRUE)
       
-      Data <-  DataForVolcano +  ylab("-log10(FDR)")
-      
-    } else if (infile == "Select the Normalization method") {  
-      
-      Data <- NULL
       
     } else if (infile == "RLE") {
       
-      DataForVolcano <-
-        ggplot(data=resRLE11(), aes(x=logFC, y=-log10(FDR), color = regulated, text = RefSeq)) + geom_point() + theme_minimal() + scale_color_manual(values = c("down" ="#9370DB", "Not differentially expressed"= "#E0EEEE", "up" = "#FFA54F")) + theme(legend.position = "none") # + geom_text(label=res11()$RefSeq, nudge_x=0.85, nudge_y=0.2, check_overlap=T) 
-      
-      Data <-  DataForVolcano +  xlab("log2FoldChange")
+      Data <- plot_ly(data = resRLE11(), 
+                      x = ~logFC,
+                      y = ~(-log10(FDR)),  
+                      color = ~regulated, 
+                      colors = c("down" = "#9370DB", 
+                                 "Not differentially expressed" = "#E0EEEE", 
+                                 "up" = "#FFA54F"),
+                      text = ~RefSeq, 
+                      type = 'scatter', 
+                      mode = 'markers',
+                      marker = list(size = 7)) %>%
+        layout(title = "Volcano Plot",
+               xaxis = list(title = "log2 Fold Change"),
+               yaxis = list(title = "-log10(padj)"),
+               showlegend = TRUE)
       
       
     } else if (infile == "Upper Quartile") {
       
-      DataForVolcano <-
-        ggplot(data=resUQ11(), aes(x=logFC, y=-log10(FDR), color = regulated, text = RefSeq)) + geom_point() + theme_minimal() + scale_color_manual(values = c("down" ="#9370DB", "Not differentially expressed"= "#E0EEEE", "up" = "#FFA54F")) + theme(legend.position = "none") # + geom_text(label=res11()$RefSeq, nudge_x=0.85, nudge_y=0.2, check_overlap=T) 
+      Data <- plot_ly(data = resUQ11(), 
+                      x = ~logFC,
+                      y = ~(-log10(FDR)),  
+                      color = ~regulated, 
+                      colors = c("down" = "#9370DB", 
+                                 "Not differentially expressed" = "#E0EEEE", 
+                                 "up" = "#FFA54F"),
+                      text = ~RefSeq, 
+                      type = 'scatter', 
+                      mode = 'markers',
+                      marker = list(size = 7)) %>%
+        layout(title = "Volcano Plot",
+               xaxis = list(title = "log2 Fold Change"),
+               yaxis = list(title = "-log10(padj)"),
+               showlegend = TRUE)
       
-      Data <-  DataForVolcano +  xlab("log2FoldChange")
       
       
     } else if (infile == "TMM") {
       
-      DataForVolcano <-
-        ggplot(data=resTMM11(), aes(x=logFC, y=-log10(FDR), color = regulated, text = RefSeq)) + geom_point() + theme_minimal() + scale_color_manual(values = c("down" ="#9370DB", "Not differentially expressed"= "#E0EEEE", "up" = "#FFA54F")) + theme(legend.position = "none") # + geom_text(label=res11()$RefSeq, nudge_x=0.85, nudge_y=0.2, check_overlap=T) 
-      
-      Data <-  DataForVolcano +  xlab("log2FoldChange")
+      Data <- plot_ly(data = resTMM11(), 
+                      x = ~logFC,
+                      y = ~(-log10(FDR)),  
+                      color = ~regulated, 
+                      colors = c("down" = "#9370DB", 
+                                 "Not differentially expressed" = "#E0EEEE", 
+                                 "up" = "#FFA54F"),
+                      text = ~RefSeq, 
+                      type = 'scatter', 
+                      mode = 'markers',
+                      marker = list(size = 7)) %>%
+        layout(title = "Volcano Plot",
+               xaxis = list(title = "log2 Fold Change"),
+               yaxis = list(title = "-log10(padj)"),
+               showlegend = TRUE)
       
     } else if (infile == "TMMwsp") {
       
-      DataForVolcano <- 
-        ggplot(data=resTMMwsp11(), aes(x=logFC, y=-log10(FDR), color = regulated, text = RefSeq)) + geom_point() + theme_minimal() + scale_color_manual(values = c("down" ="#9370DB", "Not differentially expressed"= "#E0EEEE", "up" = "#FFA54F")) + theme(legend.position = "none") # + geom_text(label=res11()$RefSeq, nudge_x=0.85, nudge_y=0.2, check_overlap=T) 
-      
-      Data <-  DataForVolcano +  xlab("log2FoldChange")
+      Data <- plot_ly(data = resTMMwsp11(), 
+                      x = ~logFC,
+                      y = ~(-log10(FDR)),  
+                      color = ~regulated, 
+                      colors = c("down" = "#9370DB", 
+                                 "Not differentially expressed" = "#E0EEEE", 
+                                 "up" = "#FFA54F"),
+                      text = ~RefSeq, 
+                      type = 'scatter', 
+                      mode = 'markers',
+                      marker = list(size = 7)) %>%
+        layout(title = "Volcano Plot",
+               xaxis = list(title = "log2 Fold Change"),
+               yaxis = list(title = "-log10(padj)"),
+               showlegend = TRUE)
       
       
     } else if (infile == "PoissonSeq") {
       
-      DataForVolcano <- 
-        ggplot(data=resPoissonSeq11(), aes(x=logFC, y=-log10(FDR), color = regulated, text = RefSeq)) + geom_point() + theme_minimal() + scale_color_manual(values = c("down" ="#9370DB", "Not differentially expressed"= "#E0EEEE", "up" = "#FFA54F")) + theme(legend.position = "none") # + geom_text(label=res11()$RefSeq, nudge_x=0.85, nudge_y=0.2, check_overlap=T) 
-      
-      Data <-  DataForVolcano +  xlab("log2FoldChange")
-      
-    } else if (infile == "SVA") {
-      
-      DataForVolcano <- 
-        ggplot(data=resSVA11(), aes(x=logFC, y=-log10(FDR), color = regulated, text = RefSeq)) + geom_point() + theme_minimal() + scale_color_manual(values = c("down" ="#9370DB", "Not differentially expressed"= "#E0EEEE", "up" = "#FFA54F")) + theme(legend.position = "none") # + geom_text(label=res11()$RefSeq, nudge_x=0.85, nudge_y=0.2, check_overlap=T) 
-      
-      Data <-  DataForVolcano +  xlab("log2FoldChange")
+      Data <- plot_ly(data = resPoissonSeq11(), 
+                      x = ~logFC,
+                      y = ~(-log10(FDR)),  
+                      color = ~regulated, 
+                      colors = c("down" = "#9370DB", 
+                                 "Not differentially expressed" = "#E0EEEE", 
+                                 "up" = "#FFA54F"),
+                      text = ~RefSeq, 
+                      type = 'scatter', 
+                      mode = 'markers',
+                      marker = list(size = 7)) %>%
+        layout(title = "Volcano Plot",
+               xaxis = list(title = "log2 Fold Change"),
+               yaxis = list(title = "-log10(padj)"),
+               showlegend = TRUE)
+
       
     } else if (infile == "Median") {
       
-      DataForVolcano <- 
-        ggplot(data=resMedian11(), aes(x=logFC, y=-log10(FDR), color = regulated, text = RefSeq)) + geom_point() + theme_minimal() + scale_color_manual(values = c("down" ="#9370DB", "Not differentially expressed"= "#E0EEEE", "up" = "#FFA54F")) + theme(legend.position = "none") # + geom_text(label=res11()$RefSeq, nudge_x=0.85, nudge_y=0.2, check_overlap=T) 
+      Data <- plot_ly(data = resMedian11(), 
+                      x = ~logFC,
+                      y = ~(-log10(FDR)),   
+                      color = ~regulated, 
+                      colors = c("down" = "#9370DB", 
+                                 "Not differentially expressed" = "#E0EEEE", 
+                                 "up" = "#FFA54F"),
+                      text = ~RefSeq, 
+                      type = 'scatter', 
+                      mode = 'markers',
+                      marker = list(size = 7)) %>%
+        layout(title = "Volcano Plot",
+               xaxis = list(title = "log2 Fold Change"),
+               yaxis = list(title = "-log10(padj)"),
+               showlegend = TRUE)
       
-      Data <-  DataForVolcano +  xlab("log2FoldChange")
-      
-    } else if (infile == "Cyclic loess") {
-      
-      DataForVolcano <- 
-        ggplot(data=resCloess11(), aes(x=logFC, y=-log10(FDR), color = regulated, text = RefSeq)) + geom_point() + theme_minimal() + scale_color_manual(values = c("down" ="#9370DB", "Not differentially expressed"= "#E0EEEE", "up" = "#FFA54F")) + theme(legend.position = "none") # + geom_text(label=res11()$RefSeq, nudge_x=0.85, nudge_y=0.2, check_overlap=T) 
-      
-      Data <-  DataForVolcano +  xlab("log2FoldChange")
-      
-    } else if (infile == "loess") {
-      
-      DataForVolcano <- 
-        ggplot(data=resloess111(), aes(x=logFC, y=-log10(FDR), color = regulated, text = RefSeq)) + geom_point() + theme_minimal() + scale_color_manual(values = c("down" ="#9370DB", "Not differentially expressed"= "#E0EEEE", "up" = "#FFA54F")) + theme(legend.position = "none") # + geom_text(label=res11()$RefSeq, nudge_x=0.85, nudge_y=0.2, check_overlap=T) 
-      
-      Data <-  DataForVolcano +  xlab("log2FoldChange")
       
     } else if (infile == "Quantile") {
-      
-      DataForVolcano <- 
-        ggplot(data=resQuantile11(), aes(x=logFC, y=-log10(FDR), color = regulated, text = RefSeq)) + geom_point() + theme_minimal() + scale_color_manual(values = c("down" ="#9370DB", "Not differentially expressed"= "#E0EEEE", "up" = "#FFA54F")) + theme(legend.position = "none") # + geom_text(label=res11()$RefSeq, nudge_x=0.85, nudge_y=0.2, check_overlap=T) 
-      
-      Data <-  DataForVolcano +  xlab("log2FoldChange")
+
+      Data <- plot_ly(data = resQuantile11(), 
+                      x = ~logFC,
+                      y = ~(-log10(FDR)),  
+                      color = ~regulated, 
+                      colors = c("down" = "#9370DB", 
+                                 "Not differentially expressed" = "#E0EEEE", 
+                                 "up" = "#FFA54F"),
+                      text = ~RefSeq, 
+                      type = 'scatter', 
+                      mode = 'markers',
+                      marker = list(size = 7)) %>%
+        layout(title = "Volcano Plot",
+               xaxis = list(title = "log2 Fold Change"),
+               yaxis = list(title = "-log10(padj)"),
+               showlegend = TRUE)
       
     } else {
       # No Normalization
-      DataForVolcano <- 
-        ggplot(data=resNN11(), aes(x=logFC, y=-log10(FDR), color = regulated, text = RefSeq)) + geom_point() + theme_minimal() + scale_color_manual(values = c("down" ="#9370DB", "Not differentially expressed"= "#E0EEEE", "up" = "#FFA54F")) + theme(legend.position = "none") # + geom_text(label=res11()$RefSeq, nudge_x=0.85, nudge_y=0.2, check_overlap=T) 
-      
-      Data <-  DataForVolcano +  xlab("log2FoldChange")
+      Data <- plot_ly(data = resdeseq11(), 
+                      x = ~log2FoldChange, 
+                      y = ~(-log10(padj)), 
+                              color = ~regulated, 
+                              colors = c("down" = "#9370DB", 
+                                         "Not differentially expressed" = "#E0EEEE", 
+                                         "up" = "#FFA54F"),
+                              text = ~RefSeq, 
+                              type = 'scatter', 
+                              mode = 'markers',
+                              marker = list(size = 7)) %>%
+        layout(title = "Volcano Plot",
+               xaxis = list(title = "log2 Fold Change"),
+               yaxis = list(title = "-log10(padj)"),
+               showlegend = TRUE)
     }
     
     return(Data)
@@ -9181,7 +9261,7 @@ server <- function(input, output) {
   
   
   
-  output$Volcano <-  renderPlotly({
+  output$Volcano <-  renderPlotly({ 
     data <- DataForVolcano()
     data
   })
