@@ -34,9 +34,9 @@ Introduce in the Rstudio Console the following:
 
 ```r
 # Package names
-packages <- c("plotly", "DT", "shiny", "ggplot2", "dplyr", "readxl","R.utils","readr","bslib", "utils", "DOSE", "combinat",
+packages <- c("plotly", "DT", "shiny", "ggplot2", "dplyr", "readxl","R.utils","readr","bslib", "utils", "combinat", "waiter",
               "tidyverse", "inops","densityClust","wesanderson","paletteer", "devtools", "shinyBS","gprofiler2",
-              "ggupset", "shinyWidgets","shinythemes","GGally","ggbump", "genekitr", "ggVennDiagram","ggvenn","RColorBrewer")
+              "ggupset", "shinyWidgets","shinythemes","GGally","ggbump", "genekitr", "ggVennDiagram","ggvenn","RColorBrewer","extrafont")
 
 # Install packages not yet installed
 installed_packages <- packages %in% rownames(installed.packages())
@@ -50,14 +50,14 @@ if (!require("BiocManager", quietly = TRUE))
 
 
 
-install.packages(c("plotly", "DT", "shiny", "ggplot2", "dplyr", "readxl","R.utils","readr","bslib", "utils", "DOSE","waiter",
+install.packages(c("plotly", "DT", "shiny", "ggplot2", "dplyr", "readxl","R.utils","readr","bslib", "utils", "combinat","waiter",
                    "tidyverse", "inops","densityClust","wesanderson","paletteer", "devtools", "shinyBS","gprofiler2",
                    "ggupset", "shinyWidgets","shinythemes","GGally","ggbump", "genekitr", "ggVennDiagram","ggvenn","RColorBrewer","extrafont"))
 
 
 
 # Package names
-BiocManagerpackages <- c("clusterProfiler","enrichplot","DESeq2","edgeR","org.Hs.eg.db","org.Mm.eg.db","org.Rn.eg.db",
+BiocManagerpackages <- c("DOSE","clusterProfiler","enrichplot","DESeq2","edgeR","org.Hs.eg.db","org.Mm.eg.db","org.Rn.eg.db",
                          "org.Mmu.eg.db","AnnotationDbi","clustifyr","Biobase","GOSemSim","vidger","DEGreport","preprocessCore",
                          "sva","affydata","Glimma","limma","BiocGenerics","enrichplot","pathview","topGO","vidger","Biobase")
 
