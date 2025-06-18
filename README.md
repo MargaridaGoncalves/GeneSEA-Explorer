@@ -91,9 +91,25 @@ invisible(lapply(BiocManagerpackages, library, character.only = TRUE))
 ## Author contributions 
 Ana M. Gonçalves was the main developer, with support from the remaining authors. All authors revised the user's guide.
 
+## GeneSEA Explorer Preview
+
+### Data Input
+![](Videos/Data%20Input.gif)
 
 
+### Volcano Plots
+![](Videos/Volcano%20Plots.gif)
 
+
+### DGE Analysis
+![](Videos/DGE.gif)
+
+
+### Shannon's Entropy Aggregation (SEA)
+![](Videos/SEA.gif)
+
+### Functional Enrichment Analysis
+![](Videos/Functional%20Enrichment%20Analysis.gif)
 
 
 
