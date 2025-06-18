@@ -1,3 +1,4 @@
+
 library(ggplot2)
 library(shiny)
 library(DT)
@@ -49,6 +50,7 @@ library(GOSemSim)
 library(pathview)
 library(topGO)
 library(ggupset)
+
 
 library(vidger)
 library(R.utils)
@@ -574,34 +576,7 @@ tabPanel(title = "Functional Enrichment Analysis",
                                                br()))))
                            
                          )),
-                         
-                         
-                         
-                         tabPanel("Goplot",tabsetPanel(
-                           tabPanel("Gene Ontology",
-                                    fluidPage(
-                                      tags$div(class="clearfix"),
-                                      fluidRow(
-                                        
-                                        tags$div(style = "margin-top:-97em"),
-                                        column(12,   
-                                               br(),
-                                               textOutput("NameNorm8"),
-                                               br(),
-                                               plotOutput("goplot"),
-                                               br()),
-                                        column(12, 
-                                               br(),
-                                               h5("ORA with SEA:"),
-                                               br(),
-                                               plotOutput("goplotShannon"),
-                                               br()))))
-                           
-                           # goplot com KEGG does not work
-                           
-                         )),
-                         
-                         
+         
                          
                          tabPanel("Emapplot", tabsetPanel(
                            tabPanel("Gene Ontology",
@@ -5761,9 +5736,9 @@ server <- function(input, output) {
       fit2 <- NULL
       
     } else {
-      
       fit2 <- goplot(Go_results(), showCategory = input$ShowCategory)
-      fit2 }
+      fit2 
+      }
     
     return(fit2)
   }, height = "auto", width = "auto" )
