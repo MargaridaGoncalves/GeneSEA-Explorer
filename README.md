@@ -20,6 +20,7 @@ More info on the usage of the application and some examples are detailed in the 
 
 > [!WARNING]  
 > GeneSEA Explorer currently supports version 4.3.3 and up to the current the R version 4.4.3.
+
 > Install compatible [R version](https://cran.r-project.org/bin/windows/base/old/) 
 
 > [!IMPORTANT]  
