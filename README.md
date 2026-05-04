@@ -53,7 +53,7 @@ if (!require("BiocManager", quietly = TRUE))
 
 
 install.packages(c("plotly", "DT", "shiny", "ggplot2", "dplyr", "readxl","R.utils","readr","bslib", "utils", "combinat","waiter",
-                   "tidyverse", "inops","densityClust","wesanderson","paletteer", "devtools", "shinyBS","gprofiler2","ggarchery"
+                   "tidyverse", "inops","densityClust","wesanderson","paletteer", "devtools", "shinyBS","gprofiler2","ggarchery",
                    "ggupset", "shinyWidgets","shinythemes","GGally","ggbump", "genekitr", "ggVennDiagram","ggvenn","RColorBrewer","extrafont"))
 
 
