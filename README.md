@@ -38,7 +38,7 @@ Introduce in the Rstudio Console the following:
 # Package names
 packages <- c("plotly", "DT", "shiny", "ggplot2", "dplyr", "readxl","R.utils","readr","bslib", "utils", "combinat", "waiter",
               "tidyverse", "inops","densityClust","wesanderson","paletteer", "devtools", "shinyBS","gprofiler2","ggarchery",
-              "ggupset", "shinyWidgets","shinythemes","GGally","ggbump", "genekitr", "ggVennDiagram","ggvenn","RColorBrewer","extrafont")
+              "ggupset", "shinyWidgets","shinythemes","shinyjs","shinyFeedback","GGally","ggbump", "genekitr", "ggVennDiagram","ggvenn","RColorBrewer","extrafont")
 
 # Install packages not yet installed
 installed_packages <- packages %in% rownames(installed.packages())
@@ -54,7 +54,7 @@ if (!require("BiocManager", quietly = TRUE))
 
 install.packages(c("plotly", "DT", "shiny", "ggplot2", "dplyr", "readxl","R.utils","readr","bslib", "utils", "combinat","waiter",
                    "tidyverse", "inops","densityClust","wesanderson","paletteer", "devtools", "shinyBS","gprofiler2","ggarchery",
-                   "ggupset", "shinyWidgets","shinythemes","GGally","ggbump", "genekitr", "ggVennDiagram","ggvenn","RColorBrewer","extrafont"))
+                   "ggupset", "shinyWidgets","shinythemes","shinyjs","shinyFeedback","GGally","ggbump", "genekitr", "ggVennDiagram","ggvenn","RColorBrewer","extrafont"))
 
 
 
