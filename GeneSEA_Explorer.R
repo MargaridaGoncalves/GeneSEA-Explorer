@@ -1,9 +1,7 @@
-
 library(ggplot2)
 library(shiny)
 library(DT)
 library(plotly)
-library(gridExtra)
 library(dplyr)
 library(DESeq2)
 library(readxl)
@@ -23,6 +21,9 @@ library(paletteer)
 library(Glimma)
 library(shinyBS)
 library(limma)
+library(shinyjs)
+library(shinyFeedback)
+library(ggarchery)
 
 ## Gene Ontology packages
 
@@ -39,7 +40,6 @@ library(clustifyr)
 library(org.Hs.eg.db) # Human
 library(org.Mm.eg.db) # Mouse
 library(org.Rn.eg.db) # Rat
-library(org.Mmu.eg.db) # Monkey
 
 
 
@@ -50,7 +50,6 @@ library(GOSemSim)
 library(pathview)
 library(topGO)
 library(ggupset)
-
 
 library(vidger)
 library(R.utils)
@@ -66,7 +65,6 @@ library(shinythemes)
 ## Shannon PLots
 
 library(GGally)
-library(ggbump)
 library(genekitr)
 
 # Venn
@@ -93,7 +91,7 @@ link_shiny <- tags$a(shiny::icon("github"), "Shiny", href = "https://github.com/
 
 
 # Define UI for application that draws a histogram
-ui <- navbarPage(title = "GeneSEA Explorer",theme = shinytheme("united"),inverse=TRUE,
+ui <- navbarPage( id = "main_nav", title = "GeneSEA Explorer",theme = shinytheme("united"),inverse=TRUE,
                  
                  
                  #tags$style(".row{height: 700px;} .row div:nth-child(1){height: 200%;}"),
@@ -454,9 +452,9 @@ tabPanel(title = "Functional Enrichment Analysis",
                           sliderInput(
                             inputId = "ShowCategory",
                             label = "Number of Categories to be shown",
-                            min = 5,
+                            min = 1,
                             max = 25,
-                            value = 10,
+                            value = 5,
                             step = 1),
                           br(),
                           h6("Kyoto Encyclopedia of Genes and Genomes OPTIONS"),
@@ -576,7 +574,34 @@ tabPanel(title = "Functional Enrichment Analysis",
                                                br()))))
                            
                          )),
-         
+                         
+                         
+                         
+                         tabPanel("Goplot",tabsetPanel(
+                           tabPanel("Gene Ontology",
+                                    fluidPage(
+                                      tags$div(class="clearfix"),
+                                      fluidRow(
+                                        
+                                        tags$div(style = "margin-top:-97em"),
+                                        column(12,   
+                                               br(),
+                                               textOutput("NameNorm8"),
+                                               br(),
+                                               plotOutput("goplot"),
+                                               br()),
+                                        column(12, 
+                                               br(),
+                                               h5("ORA with SEA:"),
+                                               br(),
+                                               plotOutput("goplotShannon"),
+                                               br()))))
+                           
+                           # goplot com KEGG does not work
+                           
+                         )),
+                         
+                         
                          
                          tabPanel("Emapplot", tabsetPanel(
                            tabPanel("Gene Ontology",
@@ -866,39 +891,167 @@ navbarMenu(title = "Links",
 server <- function(input, output) {
   
   
+  ##### Verify R version ##########
+  
+  if (getRversion() > "4.4.3") {
+    showModal(
+      modalDialog(
+        title = tagList(
+          icon("exclamation-triangle", style = "color: #d9534f;"),
+          "Unsupported R Version"
+        ),
+        
+        tags$p("Your current R version is not supported."),
+        tags$p(strong("Required: "), "R 4.4.3 or lower"),
+        tags$hr(),
+        tags$p(paste("Detected version:", as.character(getRversion()))),
+        
+        easyClose = FALSE,
+        
+        footer = tagList(
+          modalButton("Close"),
+          actionButton("update_r", "Update R version", class = "btn-danger")
+        )
+      )
+    )
+  }
+  
+  observeEvent(input$update_r, {
+    browseURL("https://cran.r-project.org/bin/windows/base/old/")
+  })
+  
   ##### Metadata call ##############
   
+  useShinyjs()
   
   randomVals <- eventReactive(input$gogo, {
     read.table("exp.txt", header = TRUE)
     
   })
   
-  
   Metadata <- reactive({
-    
     
     infile <- input$metadata
     
     if (is.null(infile)) {
-      
-      
       return(randomVals())
+    }
+    
+    file_name <- infile$name
+    file_path <- infile$datapath
+    
+    messages <- list()
+    df <- NULL
+    
+    # ---- XLS / XLSX ----
+    if (stringr::str_detect(file_name, "\\.xls[x]?$")) {
+      
+      sheets <- readxl::excel_sheets(file_path)
+      
+      if (length(sheets) == 0) {
+        messages <- c(messages, "❌ Excel file has no readable sheets")
+      }
+      
+      df <- tryCatch(readxl::read_excel(file_path), error = function(e) NULL)
+      
+      if (is.null(df) || nrow(df) == 0) {
+        messages <- c(messages, "❌ Excel file is empty or unreadable")
+      }
+      
+      if (!is.null(df)) {
+        
+        if (any(names(df) == "")) {
+          messages <- c(messages, "⚠️ Excel file has missing column names")
+        }
+        
+        na_ratio <- colMeans(is.na(df))
+        
+        if (any(na_ratio == 1)) {
+          messages <- c(messages, "⚠️ Excel file contains completely empty columns")
+        }
+      }
+      expected_cols <- ncol(df)
+      
+      if (any(vapply(df, length, integer(1)) != expected_cols)) {
+        messages <- c(messages,
+                      "❌ Rows have inconsistent number of columns (corrupted Excel structure)")
+      }
+      
+    }
+    
+    # ---- CSV ----
+    if (stringr::str_detect(file_name, "\\.csv$")) {
+      
+      df <- tryCatch(read.csv(file_path, header = TRUE),
+                     error = function(e) {
+                       messages <<- c(messages, "❌ CSV file could not be read")
+                       NULL
+                     })
+    }
+    
+    
+    
+    # ---- TXT / other ----
+    if (is.null(df) && length(messages) == 0) {
+      df <- tryCatch(read.table(file_path, header = TRUE),
+                     error = function(e) {
+                       messages <<- c(messages, "❌ File could not be parsed as table")
+                       NULL
+                     })
+    }
+    
+    # ---- SHOW MODAL IF ANY ISSUES ----
+    if (length(messages) > 0) {
+      
+      showModal(modalDialog(
+        title = "File Validation Report",
+        easyClose = TRUE,
+        footer = modalButton("OK"),
+        paste(messages, collapse = "\n")
+      ))
+      
+    }
+    
+    return(df)
+  })
+  
+  output$Metadatatable <- renderDT({
+    df <- Metadata()
+    df
+  })
+  
+  
+  ##### coldata call ##############
+  
+  randomVals2 <- eventReactive(input$gogo, {
+    read.table("meta.txt", header = TRUE)
+    
+  })
+  
+  
+  
+  Informationtable <- reactive({
+    
+    
+    infile <- input$coldata
+    
+    
+    if (is.null(infile)) {
+      
+      
+      return(randomVals2())
       
       
     } else if (stringr::str_ends(infile$datapath, "(xlsx|xls)")) {
       
-      return(read_xlsx(infile$datapath))
-      
+      read_xlsx(infile$datapath)
       
     } else if (stringr::str_ends(infile$datapath, "csv")) {
       
-      return(read.csv(infile$datapath, header = TRUE))
-      
+      read.csv(infile$datapath, header = TRUE)
       
     } else {
-      return(read.table(infile$datapath, header = TRUE))
-      
+      read.table(infile$datapath, header = TRUE)
     }
     
     
@@ -910,7 +1063,7 @@ server <- function(input, output) {
     df <- Metadata()
     df
   })
-  
+
   
   ##### coldata call ##############
   
@@ -5676,8 +5829,55 @@ server <- function(input, output) {
   
   
   
+  #### Functional Enrichment Analysis ####
   
+  # Trigger warnings when opening "Functional Enrichment Analysis"
+  # Combines checks so modals do not collide
   
+  observeEvent(input$main_nav, {
+    
+    if (input$main_nav == "Functional Enrichment Analysis") {
+      
+      no_data <- is.null(input$cont) 
+      no_sea  <- is.null(input$Ei)   
+      
+      # If BOTH are missing
+      if (no_data) {
+        
+        showModal(
+          modalDialog(
+            title = "Required inputs are missing",
+            tagList(
+              tags$p("Data was not uploaded."),
+              tags$p("SEA Analysis was not performed.")
+            ),
+            "Please complete the following first:",
+            tags$ol(
+              tags$li("Go to 'Data Input' and upload your dataset."),
+              tags$li("Go to 'Differential Gene Expression Analysis' and run SEA.")
+            ),
+            easyClose = TRUE
+          )
+        )
+        
+        # If only SEA is missing
+      } else if (no_sea){
+        
+        showModal(
+          modalDialog(
+            title = "Required inputs are missing",
+              tagList(
+                tags$p("SEA Analysis was not performed.")),
+            "Please complete the following first:",
+            tags$ol(
+              tags$li("Please go to the 'Differential Gene Expression Analysis' section first.")),
+            easyClose = TRUE
+          )
+        )
+      }
+      
+    }
+  })
   
   
   #### Gene Ontology Normal methods ####
@@ -5708,19 +5908,50 @@ server <- function(input, output) {
     infile <- input$KeyType
     req(infile)
     
-    
     if (infile == 'Select the KeyType') {
-      data <- NULL
-      
-    } else {
-      
-      data <- plot(barplot(Go_results(), showCategory = input$ShowCategory)) 
+      return(NULL)
     }
-    return(data)
-  },  height = "auto",  width = "auto" , res = 72 )
-  
+    
+    tryCatch({
+      
+      res <- Go_results()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched GO terms found.",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      
+      barplot(Go_results(), showCategory = input$ShowCategory)
+      
+    }, error = function(e) {
+      
+      if (grepl("length zero", e$message)) {
+        showNotification(
+          "Error: No enriched GO terms found.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+    
   
   ###
+  
   
   
   ## Goplot ##
@@ -5731,17 +5962,46 @@ server <- function(input, output) {
     infile <- input$KeyType
     req(infile)
     
-    
     if (infile == 'Select the KeyType') {
-      fit2 <- NULL
-      
-    } else {
-      fit2 <- goplot(Go_results(), showCategory = input$ShowCategory)
-      fit2 
-      }
+      return(NULL)
+    }
     
-    return(fit2)
-  }, height = "auto", width = "auto" )
+    tryCatch({
+      
+      res <- Go_results()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched GO terms found.",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      goplot(Go_results(), showCategory = input$ShowCategory)
+      
+    }, error = function(e) {
+      
+      if (grepl("should contain at least two columns", e$message)) {
+        showNotification(
+          "Error: No enriched GO terms found.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+    
   
   ###
   
@@ -5750,22 +6010,50 @@ server <- function(input, output) {
   ## Dotplot ##
   
   output$dotplot<- renderPlot({
-    
-    infile <- input$KeyType
-    req(infile)
-    
-    
-    if (infile == 'Select the KeyType') {
-      fit3 <- NULL
+
+      infile <- input$KeyType
+      req(infile)
       
-    } else {
-      fit3 <- dotplot(Go_results(), showCategory = input$ShowCategory)
-      fit3
-    }
-    return(fit3)
+      if (infile == 'Select the KeyType') {
+        return(NULL)
+      }
+      
+      tryCatch({
+        
+        res <- Go_results()
+        
+        if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+          showNotification(
+            "Error: No enriched GO terms found.",
+            type = "error",
+            duration = NULL
+          )
+          return(NULL)
+        }
+        
+        dotplot(Go_results(), showCategory = input$ShowCategory)
+        
+      }, error = function(e) {
+        
+        if (grepl("length zero", e$message)) {
+          showNotification(
+            "Error: No enriched GO terms found.",
+            type = "error",
+            duration = NULL
+          )
+          
+        } else {
+          showNotification(
+            paste("Unexpected error:", e$message),
+            type = "error"
+          )
+        }
+        
+        return(NULL)
+      })
+      
+    }, height = "auto", width = "auto", res = 72)
     
-  },  height = "auto",  width = "auto" , res = 72  )
-  
   ###
   
   
@@ -5780,14 +6068,45 @@ server <- function(input, output) {
     
     if (infile == 'Select the KeyType') {
       data <- NULL
-      
-    } else {
-      
-      data <- cnetplot1()
     }
-    return(data)
-    
-  },  height = "auto",  width = "auto" , res = 72 )
+      
+      tryCatch({
+        
+        res <- Go_results()
+        
+        if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+          showNotification(
+            "Error: No enriched GO terms found.",
+            type = "error",
+            duration = NULL
+          )
+          return(NULL)
+        }
+        
+        cnetplot1()
+        
+      }, error = function(e) {
+        
+        if (grepl("contain missing values", e$message)) {
+          showNotification(
+            "Error: No enriched GO terms found.",
+            type = "error",
+            duration = NULL
+          )
+          
+        } else {
+          showNotification(
+            paste("Unexpected error:", e$message),
+            type = "error"
+          )
+        }
+        
+        return(NULL)
+      })
+      
+    }, height = "auto", width = "auto", res = 72)
+      
+  
   
   
   fold_change_geneList <- reactive({ setNames(object = DataGeo()[,"logFC"], nm = row.names(DataGeo())) })
@@ -5806,12 +6125,12 @@ server <- function(input, output) {
     
     if (infile == "Deseq2") {
       
-      fit3 <- cnetplot(Go_results(), showCategory = input$ShowCategory, color.params = list(foldChange=fold_change_geneListDeseq2())) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
+      fit3 <- cnetplot(Go_results(), showCategory = input$ShowCategory, igraph::layout_in_circle, foldChange=fold_change_geneListDeseq2()) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
       fit3
       
     } else {
       
-      fit3 <- cnetplot(Go_results(), showCategory = input$ShowCategory, color.params = list(foldChange=fold_change_geneList())) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
+      fit3 <- cnetplot(Go_results(), showCategory = input$ShowCategory, igraph::layout_in_circle, foldChange=fold_change_geneList()) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
       fit3
       
     }
@@ -5830,14 +6149,44 @@ server <- function(input, output) {
     
     if (infile == 'Select the KeyType') {
       data <- NULL
-      
-    } else {
-      
-      data <- cnetplot2()
     }
-    return(data)
     
-  }, height = "auto", width = "auto"  )
+    tryCatch({
+      
+      res <- Go_results()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched GO terms found.",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      cnetplot2()
+      
+    }, error = function(e) {
+      
+      if (grepl("contain missing values", e$message)) {
+        showNotification(
+          "Error: No enriched GO terms found.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+    
   
   
   
@@ -5848,12 +6197,12 @@ server <- function(input, output) {
     
     if (infile == "Deseq2") {
       
-      fit3 <- cnetplot(Go_results(), showCategory = input$ShowCategory, foldChange=fold_change_geneListDeseq2(), circular = TRUE, colorEdge = TRUE) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
+      fit3 <- cnetplot(Go_results(), showCategory = input$ShowCategory, foldChange=fold_change_geneListDeseq2()) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
       fit3
       
     } else {
       
-      fit3 <- cnetplot(Go_results(), showCategory = input$ShowCategory, foldChange=fold_change_geneList(), circular = TRUE, colorEdge = TRUE) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
+      fit3 <- cnetplot(Go_results(), showCategory = input$ShowCategory, foldChange=fold_change_geneList()) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
       fit3
       
     }
@@ -5873,15 +6222,45 @@ server <- function(input, output) {
     
     
     if (infile == 'Select the KeyType') {
-      fit3 <- NULL
-      
-    } else {
-      
-      fit3 <- upsetplot(Go_results(), n = input$ShowCategory)
-      fit3
+      return(NULL)
     }
-    return(fit3)
-  },  height = "auto",  width = "auto" , res = 72 )
+    
+    tryCatch({
+      
+      res <- Go_results()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched GO terms found.",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      upsetplot(Go_results(), n = input$ShowCategory)
+      
+    }, error = function(e) {
+      
+      if (grepl("undefined columns", e$message)) {
+        showNotification(
+          "Error: No enriched GO terms found.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+
   
   ###
   
@@ -5895,17 +6274,46 @@ server <- function(input, output) {
     
     
     if (infile == 'Select the KeyType') {
-      data <- NULL
-      
-    } else {
-      
-      fit3 <- heatplot(Go_results(), showCategory = input$ShowCategory)
-      fit3
-      
+      return(NULL)
     }
-    return(fit3)
     
-  }, height = "auto",  width = "auto" , res = 72 )
+    tryCatch({
+      
+      res <- Go_results()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched GO terms found",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      heatplot(Go_results(), showCategory = input$ShowCategory)
+      
+    }, error = function(e) {
+      
+      if (grepl("undefined columns", e$message)) {
+        showNotification(
+          "Error: No enriched GO terms found.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+    
+
   
   
   
@@ -5921,15 +6329,45 @@ server <- function(input, output) {
     
     
     if (infile == 'Select the KeyType') {
-      data <- NULL
-      
-    } else {
-      
-      data <- Heatplot2()
+      return(NULL)
     }
-    return(data)
     
-  },  height = "auto",  width = "auto" , res = 72 )
+    tryCatch({
+      
+      res <- Go_results()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched GO terms found.",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      Heatplot2()
+      
+    }, error = function(e) {
+      
+      if (grepl("undefined columns", e$message)) {
+        showNotification(
+          "Error: No enriched GO terms found.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+
   
   
   
@@ -5973,21 +6411,50 @@ server <- function(input, output) {
   ## emapplot ##
   
   output$emapplot <- renderPlot({
-    
     infile <- input$KeyType
     req(infile)
     
     
     if (infile == 'Select the KeyType') {
-      fit3 <- NULL
-      
-    } else {
-      
-      fit3 <- emapplot(ora_analysis_bp(), showCategory = input$ShowCategory)
-      fit3
+      return(NULL)
     }
-    return(fit3)
-  },  height = "auto",  width = "auto" , res = 72 )
+    
+    tryCatch({
+      
+      res <- Go_results()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched GO terms found",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      emapplot(ora_analysis_bp(), showCategory = input$ShowCategory)
+      
+    }, error = function(e) {
+      
+      if (grepl("error in evaluating", e$message)) {
+        showNotification(
+          "Error: No enriched GO terms found.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+
   
   ###
   
@@ -6003,21 +6470,49 @@ server <- function(input, output) {
     
     
     if (infile == 'Select the KeyType') {
-      fit3 <- NULL
-      
-    } else {
-      
-      fit3 <- treeplot(ora_analysis_bp(), showCategory = input$ShowCategory)
-      fit3
+      return(NULL)
     }
-    return(fit3)
-  },  height = "auto",  width = "auto" , res = 72  )
+    
+    tryCatch({
+      
+      res <- Go_results()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched GO terms found",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      treeplot(ora_analysis_bp(), showCategory = input$ShowCategory)
+      
+    }, error = function(e) {
+      
+      if (grepl("error in evaluating", e$message)) {
+        showNotification(
+          "Error: No enriched GO terms found.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+    
+
   
   
-  # p2 <- treeplot(edox2, hclust_method = "average")
-  # (e.g., ‘average’, ‘complete’, ‘median’, ‘centroid’, etc., see also the document of the hclust() function). 
-  
-  ###
+
   
   
   
@@ -6188,15 +6683,45 @@ server <- function(input, output) {
     
     
     if (infile == 'Select the KeyType') {
-      fit3 <- NULL
-      
-    } else {
-      fit3 <- dotplot(EnrichGSEA(), showCategory = input$ShowCategory)
-      fit3
+      return(NULL)
     }
-    return(fit3)
     
-  },  height = "auto",  width = "auto" , res = 72  )
+    tryCatch({
+      
+      res <- EnrichGSEA()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched GSEA terms were found",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      dotplot(EnrichGSEA(), showCategory = input$ShowCategory)
+      
+    }, error = function(e) {
+      
+      if (grepl("length zero", e$message)) {
+        showNotification(
+          "Error: No enriched GO terms found.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+
   
   ###
   
@@ -6211,15 +6736,45 @@ server <- function(input, output) {
     
     
     if (infile == 'Select the KeyType') {
-      data <- NULL
-      
-    } else {
-      
-      data <- cnetplot1GSEA()
+      return(NULL)
     }
-    return(data)
     
-  },  height = "auto",  width = "auto" , res = 72 )
+    tryCatch({
+      
+      res <- EnrichGSEA()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched GSEA terms were found",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      cnetplot1GSEA()
+      
+    }, error = function(e) {
+      
+      if (grepl("contain missing values", e$message)) {
+        showNotification(
+          "Error: No enriched GO terms found.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+
   
   
   fold_change_geneListGSEA <- reactive({ setNames(object = DataGeoGSEA()[,"logFC"], nm = row.names(DataGeoGSEA())) })
@@ -6238,12 +6793,12 @@ server <- function(input, output) {
     
     if (infile == "Deseq2") {
       
-      fit3 <- cnetplot(EnrichGSEA(), showCategory = input$ShowCategory, color.params = list(foldChange=fold_change_geneListDeseq2GSEA())) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
+      fit3 <- cnetplot(EnrichGSEA(), showCategory = input$ShowCategory,igraph::layout_in_circle, foldChange=fold_change_geneListDeseq2GSEA()) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
       fit3
       
     } else {
       
-      fit3 <- cnetplot(EnrichGSEA(), showCategory = input$ShowCategory, color.params = list(foldChange=fold_change_geneListGSEA())) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
+      fit3 <- cnetplot(EnrichGSEA(), showCategory = input$ShowCategory, igraph::layout_in_circle, foldChange=fold_change_geneListGSEA()) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
       fit3
       
     }
@@ -6261,15 +6816,45 @@ server <- function(input, output) {
     
     
     if (infile == 'Select the KeyType') {
-      data <- NULL
-      
-    } else {
-      
-      data <- cnetplot2GSEA()
+      return(NULL)
     }
-    return(data)
     
-  }, height = "auto", width = "auto"  )
+    tryCatch({
+      
+      res <- EnrichGSEA()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched GSEA terms were found",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      cnetplot2GSEA()
+      
+    }, error = function(e) {
+      
+      if (grepl("contain missing values", e$message)) {
+        showNotification(
+          "Error: No enriched GO terms found.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+
   
   
   
@@ -6280,12 +6865,12 @@ server <- function(input, output) {
     
     if (infile == "Deseq2") {
       
-      fit3 <- cnetplot(EnrichGSEA(), showCategory = input$ShowCategory, foldChange=fold_change_geneListDeseq2GSEA(), circular = TRUE, colorEdge = TRUE) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
+      fit3 <- cnetplot(EnrichGSEA(), showCategory = input$ShowCategory, foldChange=fold_change_geneListDeseq2GSEA()) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
       fit3
       
     } else {
       
-      fit3 <- cnetplot(EnrichGSEA(), showCategory = input$ShowCategory, foldChange=fold_change_geneListGSEA(), circular = TRUE, colorEdge = TRUE) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
+      fit3 <- cnetplot(EnrichGSEA(), showCategory = input$ShowCategory, foldChange=fold_change_geneListGSEA()) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
       fit3
       
     }
@@ -6305,15 +6890,46 @@ server <- function(input, output) {
     
     
     if (infile == 'Select the KeyType') {
-      fit3 <- NULL
-      
-    } else {
-      
-      fit3 <- upsetplot(EnrichGSEA(), n = input$ShowCategory)
-      fit3
+      return(NULL)
     }
-    return(fit3)
-  },  height = "auto",  width = "auto" , res = 72 )
+    
+    tryCatch({
+      
+      res <- EnrichGSEA()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched GSEA terms were found",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      upsetplot(EnrichGSEA(), n = input$ShowCategory)
+      
+    }, error = function(e) {
+      
+      if (grepl("undefined columns", e$message)) {
+        showNotification(
+          "Error: No enriched GO terms found.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+    
+
   
   ###
   
@@ -6329,15 +6945,45 @@ server <- function(input, output) {
     
     
     if (infile == 'Select the KeyType') {
-      data <- NULL
-      
-    } else {
-      
-      data <- Heatplot2_GSEA()
+      return(NULL)
     }
-    return(data)
     
-  },  height = "auto",  width = "auto" , res = 72 )
+    tryCatch({
+      
+      res <- EnrichGSEA()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched GSEA terms were found",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      Heatplot2_GSEA()
+      
+    }, error = function(e) {
+      
+      if (grepl("undefined columns", e$message)) {
+        showNotification(
+          "Error: No enriched GO terms found.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+
   
   
   
@@ -6386,16 +7032,47 @@ server <- function(input, output) {
     req(infile)
     
     
+    
     if (infile == 'Select the KeyType') {
-      fit3 <- NULL
-      
-    } else {
-      
-      fit3 <- emapplot(ora_analysis_bp_GSEA(), showCategory = input$ShowCategory)
-      fit3
+      return(NULL)
     }
-    return(fit3)
-  },  height = "auto",  width = "auto" , res = 72 )
+    
+    tryCatch({
+      
+      res <- EnrichGSEA()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched GSEA terms were found",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      emapplot(ora_analysis_bp_GSEA(), showCategory = input$ShowCategory)
+      
+    }, error = function(e) {
+      
+      if (grepl("error in evaluating", e$message)) {
+        showNotification(
+          "Error: No enriched GO terms found.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+
   
   ###
   
@@ -6410,23 +7087,52 @@ server <- function(input, output) {
     req(infile)
     
     
+    
     if (infile == 'Select the KeyType') {
-      fit3 <- NULL
-      
-    } else {
-      
-      fit3 <- treeplot(ora_analysis_bp_GSEA(), showCategory = input$ShowCategory)
-      fit3
+      return(NULL)
     }
-    return(fit3)
-  },  height = "auto",  width = "auto" , res = 72  )
+    
+    tryCatch({
+      
+      res <- EnrichGSEA()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched GSEA terms were found",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      treeplot(ora_analysis_bp_GSEA(), showCategory = input$ShowCategory)
+      
+    }, error = function(e) {
+      
+      if (grepl("error in evaluating", e$message)) {
+        showNotification(
+          "Error: No enriched GO terms found.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+
   
   
   
   
   ###
-  
-  
   
   
   
@@ -6437,10 +7143,8 @@ server <- function(input, output) {
   
   DataGO <- reactive({
     
-    
     infile <- input$NormForOntology
-    req(infile)
-    
+    req(infile,tentativa())
     
     if (infile == "Deseq2") {
       
@@ -6524,7 +7228,7 @@ server <- function(input, output) {
   
   Go_results_Shannon <-  reactive({ 
     infile <- input$Ei
-    req(infile)
+    req(infile, DataGO())
     
     if (is.null(infile)) {
       data <- NULL
@@ -6544,27 +7248,64 @@ server <- function(input, output) {
   
   ## BarPlot Shannon ##
   
-  output$fitShannon<- renderPlot({
+
+  
+  output$fitShannon <- renderPlot({
     
     infile <- input$KeyType
     req(infile)
     
-    
+    # If no database selected
     if (infile == 'Select the KeyType') {
-      data <- NULL
-      
-    } else {
-      data <- plot(barplot(Go_results_Shannon(), showCategory = input$ShowCategory)) # slider option
+      return(NULL)
     }
-    return(data)
-  })
+    
+    tryCatch({
+      
+      res <- Go_results_Shannon()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched GO terms found with SEA",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      
+      barplot(Go_results_Shannon(),showCategory = input$ShowCategory)
+      
+    }, error = function(e) {
+      
+      if (grepl("length zero", e$message)) {
+        showNotification(
+          "Error: No enriched GO terms found.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else if (grepl("evaluating the argument", e$message)) {
+        showNotification(
+          "Error: The SEA analysis was not performed. Go to 'Differential Gene Expression Analysis' section to perform SEA analysis.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
   
   
-  ###
-  
-  
-  
-  
+  ####
   
   
   ## Goplot ##
@@ -6576,15 +7317,52 @@ server <- function(input, output) {
     
     
     if (infile == 'Select the KeyType') {
-      data <- NULL
-      
-    } else {
-      
-      data <- plot(goplot(Go_results_Shannon(), showCategory = input$ShowCategory))
+      return(NULL)
     }
-    return(data)
     
-  },  height = "auto",  width = "auto" , res = 72 )
+    tryCatch({
+      
+      res <- Go_results_Shannon()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched GO terms found with SEA",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      goplot(Go_results_Shannon(), showCategory = input$ShowCategory)
+      
+    }, error = function(e) {
+      
+      if (grepl("contain at least two columns", e$message)) {
+        showNotification(
+          "Error: No enriched GO terms found.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else if (grepl("evaluating the argument", e$message)) {
+        showNotification(
+          "Error: The SEA analysis was not performed. Go to 'Differential Gene Expression Analysis' section to perform SEA analysis.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+
   
   ###
   
@@ -6596,19 +7374,54 @@ server <- function(input, output) {
     
     infile <- input$KeyType
     req(infile)
-    
-    
-    if (infile == 'Select the KeyType') {
-      fit3 <- NULL
       
-    } else {
       
-      fit3 <- dotplot(Go_results_Shannon(), showCategory = input$ShowCategory)
-      fit3
-    } 
-    
-    return(fit3)
-  },  height = "auto",  width = "auto" , res = 72 )
+      if (infile == 'Select the KeyType') {
+        return(NULL)
+      }
+      
+      tryCatch({
+        
+        res <- Go_results_Shannon()
+        
+        if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+          showNotification(
+            "Error: No enriched GO terms found with SEA",
+            type = "error",
+            duration = NULL
+          )
+          return(NULL)
+        }
+        
+        dotplot(Go_results_Shannon(), showCategory = input$ShowCategory)
+        
+      }, error = function(e) {
+        
+        if (grepl("length zero", e$message)) {
+          showNotification(
+            "Error: No enriched GO terms found.",
+            type = "error",
+            duration = NULL
+          )
+          
+        } else if (grepl("evaluating the argument", e$message)) {
+          showNotification(
+            "Error: The SEA analysis was not performed. Go to 'Differential Gene Expression Analysis' section to perform SEA analysis.",
+            type = "error",
+            duration = NULL
+          )
+          
+        } else {
+          showNotification(
+            paste("Unexpected error:", e$message),
+            type = "error"
+          )
+        }
+        
+        return(NULL)
+      })
+      
+    }, height = "auto", width = "auto", res = 72)
   
   ###
   
@@ -6624,14 +7437,55 @@ server <- function(input, output) {
     
     if (infile == 'Select the KeyType') {
       data <- NULL
-      
-    } else {
-      
-      data <- cnetplot1Shannon()
     }
-    return(data)
     
-  },  height = "auto",  width = "auto" , res = 72 )
+      
+      tryCatch({
+        
+        res <- Go_results_Shannon()
+        
+        if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+          showNotification(
+            "Error: No enriched GO terms found with SEA",
+            type = "error",
+            duration = NULL
+          )
+          return(NULL)
+        }
+        
+        cnetplot1Shannon()
+        
+      }, error = function(e) {
+        
+        if (grepl("contain missing values", e$message)) {
+          showNotification(
+            "Error: No enriched GO terms found.",
+            type = "error",
+            duration = NULL
+          )
+          
+        } else if (grepl("evaluating the argument", e$message)) {
+          showNotification(
+            "Error: The SEA analysis was not performed. Go to 'Differential Gene Expression Analysis' section to perform SEA analysis.",
+            type = "error",
+            duration = NULL
+          )
+          
+        } else {
+          showNotification(
+            paste("Unexpected error:", e$message),
+            type = "error"
+          )
+        }
+        
+        return(NULL)
+      })
+      
+    }, height = "auto", width = "auto", res = 72)
+      
+
+  
+  
   
   fold_change_geneList_Shannon <- reactive({ setNames(object = DataGO()[,"logFC"], nm = row.names(DataGO())) })
   
@@ -6649,12 +7503,12 @@ server <- function(input, output) {
     
     if (infile == "Deseq2") {
       
-      fit3 <- cnetplot(Go_results_Shannon(), showCategory = input$ShowCategory, color.params = list(foldChange=fold_change_geneListDeseq2_Shannon())) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
+      fit3 <- cnetplot(Go_results_Shannon(), showCategory = input$ShowCategory,  igraph::layout_in_circle, foldChange=fold_change_geneListDeseq2_Shannon()) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
       fit3
       
     } else {
       
-      fit3 <- cnetplot(Go_results_Shannon(), showCategory = input$ShowCategory, color.params = list(foldChange=fold_change_geneList_Shannon())) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
+      fit3 <- cnetplot(Go_results_Shannon(), showCategory = input$ShowCategory, igraph::layout_in_circle, foldChange=fold_change_geneList_Shannon()) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
       fit3
       
     }
@@ -6673,13 +7527,53 @@ server <- function(input, output) {
     
     if (infile == 'Select the KeyType') {
       data <- NULL
-      
-    } else {
-      data <- cnetplot2Shannon()
     }
-    return(data)
     
-  },  height = "auto",  width = "auto" , res = 72 )
+    
+    tryCatch({
+      
+      res <- Go_results_Shannon()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched GO terms found with SEA",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      cnetplot2Shannon()
+      
+    }, error = function(e) {
+      
+      if (grepl("contain missing values", e$message)) {
+        showNotification(
+          "Error: No enriched GO terms found.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else if (grepl("evaluating the argument", e$message)) {
+        showNotification(
+          "Error: The SEA analysis was not performed. Go to 'Differential Gene Expression Analysis' section to perform SEA analysis.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+    
+
   
   
   
@@ -6690,12 +7584,12 @@ server <- function(input, output) {
     
     if (infile == "Deseq2") {
       
-      fit3 <- cnetplot(Go_results_Shannon(), showCategory = input$ShowCategory, foldChange=fold_change_geneListDeseq2_Shannon(), circular = TRUE, colorEdge = TRUE) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
+      fit3 <- cnetplot(Go_results_Shannon(), showCategory = input$ShowCategory, foldChange=fold_change_geneListDeseq2_Shannon()) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
       fit3
       
     } else {
       
-      fit3 <- cnetplot(Go_results_Shannon(), showCategory = input$ShowCategory, foldChange=fold_change_geneList_Shannon(), circular = TRUE, colorEdge = TRUE) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
+      fit3 <- cnetplot(Go_results_Shannon(), showCategory = input$ShowCategory, foldChange=fold_change_geneList_Shannon()) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
       fit3
       
     }
@@ -6716,15 +7610,53 @@ server <- function(input, output) {
     
     
     if (infile == 'Select the KeyType') {
-      fit3 <- NULL
-      
-    } else {
-      
-      fit3 <- upsetplot(Go_results_Shannon(), n = input$ShowCategory)
-      fit3
+      return(NULL)
     }
-    return(fit3)
-  }, height = "auto",  width = "auto" , res = 72 )
+    
+    tryCatch({
+      
+      res <- Go_results_Shannon()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched GO terms found with SEA",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      upsetplot(Go_results_Shannon(), n = input$ShowCategory)
+      
+    }, error = function(e) {
+      
+      if (grepl("undefined columns", e$message)) {
+        showNotification(
+          "Error: No enriched GO terms found.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else if (grepl("evaluating the argument", e$message)) {
+        showNotification(
+          "Error: The SEA analysis was not performed. Go to 'Differential Gene Expression Analysis' section to perform SEA analysis.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+    
+
   
   ###
   
@@ -6736,18 +7668,54 @@ server <- function(input, output) {
     infile <- input$KeyType
     req(infile)
     
-    
     if (infile == 'Select the KeyType') {
-      fit3 <- NULL
-      
-    } else {
-      
-      fit3 <- heatplot(Go_results_Shannon(), showCategory = input$ShowCategory)
-      fit3
+      return(NULL)
     }
-    return(fit3)
     
-  },  height = "auto",  width = "auto" , res = 72 )
+    tryCatch({
+      
+      res <- Go_results_Shannon()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched GO terms found with SEA",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      heatplot(Go_results_Shannon(), showCategory = input$ShowCategory)
+      
+    }, error = function(e) {
+      
+      if (grepl("undefined columns", e$message)) {
+        showNotification(
+          "Error: No enriched GO terms found.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else if (grepl("evaluating the argument", e$message)) {
+        showNotification(
+          "Error: The SEA analysis was not performed. Go to 'Differential Gene Expression Analysis' section to perform SEA analysis.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+  
+ 
   
   
   
@@ -6761,16 +7729,52 @@ server <- function(input, output) {
     infile <- input$KeyType
     req(infile)
     
-    
     if (infile == 'Select the KeyType') {
-      data <- NULL
-      
-    } else {
-      
-      data <- Heatplot2Shannon()
+      return(NULL)
     }
-    return(data)
-  }, height = "auto",  width = "auto" , res = 72 )
+    
+    tryCatch({
+      
+      res <- Go_results_Shannon()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched GO terms found with SEA",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      Heatplot2Shannon()
+      
+    }, error = function(e) {
+      
+      if (grepl("undefined columns", e$message)) {
+        showNotification(
+          "Error: No enriched GO terms found.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else if (grepl("evaluating the argument", e$message)) {
+        showNotification(
+          "Error: The SEA analysis was not performed. Go to 'Differential Gene Expression Analysis' section to perform SEA analysis.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
   
   
   
@@ -6820,16 +7824,52 @@ server <- function(input, output) {
     
     
     if (infile == 'Select the KeyType') {
-      fit3 <- NULL
-      
-    } else {
-      
-      fit3 <- emapplot(ora_analysis_bp_Shannon(), showCategory = input$ShowCategory)
-      fit3
+      return(NULL)
     }
-    return(fit3)
     
-  },  height = "auto",  width = "auto" , res = 72 )
+    tryCatch({
+      
+      res <- Go_results_Shannon()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched GO terms found with SEA",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      emapplot(ora_analysis_bp_Shannon(), showCategory = input$ShowCategory)
+      
+    }, error = function(e) {
+      
+      if (grepl("error in evaluating", e$message)) {
+        showNotification(
+          "Error: No enriched GO terms found.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else if (grepl("evaluating the argument", e$message)) {
+        showNotification(
+          "Error: The SEA analysis was not performed. Go to 'Differential Gene Expression Analysis' section to perform SEA analysis.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+
   
   ###
   
@@ -6846,22 +7886,52 @@ server <- function(input, output) {
     
     
     if (infile == 'Select the KeyType') {
-      fit3 <- NULL
+      return(NULL)
+    }
+    
+    tryCatch({
       
-    } else {
+      res <- Go_results_Shannon()
       
-      fit3 <- treeplot(ora_analysis_bp_Shannon(), showCategory = input$ShowCategory)
-      fit3
-    } 
-    return(fit3)
-  }, height = "auto",  width = "auto" , res = 72 )
-  
-  
-  
-  
-  
-  
-  
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched GO terms found with SEA",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      treeplot(ora_analysis_bp_Shannon(), showCategory = input$ShowCategory)
+      
+    }, error = function(e) {
+      
+      if (grepl("error in evaluating", e$message)) {
+        showNotification(
+          "Error: No enriched GO terms found.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else if (grepl("evaluating the argument", e$message)) {
+        showNotification(
+          "Error: The SEA analysis was not performed. Go to 'Differential Gene Expression Analysis' section to perform SEA analysis.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+
   
   
   
@@ -7641,26 +8711,58 @@ server <- function(input, output) {
   
   
   
-  ## PLOTS FOR THE KEGG
+  ### PLOTS FOR THE KEGG
   
   ## BarPlot ## 
   
-  output$KEGGbarplot<- renderPlot({
+  output$KEGGbarplot <- renderPlot({
     
     infile <- input$KEGGkeytype
-    req(infile)
+    info <- input$NormKegg
+    f <- input$KeyType
+    t <- input$KEGGorganism
+    req(infile,t,f,info)
     
     
-    if (infile == 'Select the database') {
-      data <- NULL
-      
-    } else {
-      
-      data <- plot(barplot(EnrichKegg(), showCategory = input$ShowKEGGCategory)) # slider option
+    if (infile == 'Select the database' || t == 'Select the organism' || f == 'Select the Keytype' || info == 'Select the Normalization method') {
+      return(NULL)
     }
-    return(data)
     
-  },  height = "auto",  width = "auto" , res = 72 )
+    tryCatch({
+      
+      res <- EnrichKegg()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched KEGG terms found.",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      barplot(EnrichKegg(), showCategory = input$ShowKEGGCategory)
+      
+    }, error = function(e) {
+      
+      if (grepl("length zero", e$message)) {
+        showNotification(
+          "Error: No enriched KEGG terms found.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
   
   
   ###
@@ -7670,20 +8772,54 @@ server <- function(input, output) {
   ## Goplot ##
   
   output$KEGGgoplot <- renderPlot({
+    
     infile <- input$KEGGkeytype
-    req(infile)
+    info <- input$NormKegg
+    f <- input$KeyType
+    t <- input$KEGGorganism
+    req(infile,t,f,info)
     
     
-    if (infile == 'Select the database') {
-      data <- NULL
-      
-    } else {
-      
-      data <- plot(goplot(EnrichKegg(), showCategory = input$ShowKEGGCategory))
+    if (infile == 'Select the database' || t == 'Select the organism' || f == 'Select the Keytype' || info == 'Select the Normalization method') {
+      return(NULL)
     }
-    return(data)
     
-  },  height = "auto",  width = "auto" , res = 72 )
+    tryCatch({
+      
+      res <- EnrichKegg()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched KEGG terms found.",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      goplot(EnrichKegg(), showCategory = input$ShowKEGGCategory)
+      
+    }, error = function(e) {
+      
+      if (grepl("should contain at least two columns", e$message)) {
+        showNotification(
+          "Error: No enriched KEGG terms found.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+
   
   ###
   
@@ -7692,20 +8828,54 @@ server <- function(input, output) {
   ## Dotplot ##
   
   output$KEGGdotplot<- renderPlot({
+    
     infile <- input$KEGGkeytype
-    req(infile)
+    info <- input$NormKegg
+    f <- input$KeyType
+    t <- input$KEGGorganism
+    req(infile,t,f,info)
     
     
-    if (infile == 'Select the database') {
-      fit3 <- NULL
-      
-    } else {
-      
-      fit3 <- dotplot(EnrichKegg(), showCategory = input$ShowKEGGCategory)
-      fit3
+    if (infile == 'Select the database' || t == 'Select the organism' || f == 'Select the Keytype' || info == 'Select the Normalization method') {
+      return(NULL)
     }
-    return(fit3)
-  },  height = "auto",  width = "auto" , res = 72 )
+    
+    tryCatch({
+      
+      res <- EnrichKegg()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched KEGG terms found.",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      dotplot(EnrichKegg(), showCategory = input$ShowKEGGCategory)
+      
+    }, error = function(e) {
+      
+      if (grepl("length zero", e$message)) {
+        showNotification(
+          "Error: No enriched KEGG terms found.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+   
   
   ###
   
@@ -7714,18 +8884,57 @@ server <- function(input, output) {
   ## cnetplot ##
   
   output$KEGGcnetplot <- renderPlot({
+    
     infile <- input$KEGGkeytype
-    req(infile)
+    info <- input$NormKegg
+    f <- input$KeyType
+    t <- input$KEGGorganism
+    req(infile,t,f,info)
     
     
-    if (infile == 'Select the database') {
-      data <- NULL
-      
-    } else {
-      data <- KEGGcnetplot1()
+    if (infile == 'Select the database' || t == 'Select the organism' || f == 'Select the Keytype' || info == 'Select the Normalization method') {
+      return(NULL)
     }
-    return(data)
-  }, height = "auto",  width = "auto" , res = 72 )
+    
+    tryCatch({
+      
+      res <- EnrichKegg()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched KEGG terms found.",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      KEGGcnetplot1()
+      
+    }, error = function(e) {
+      
+      if (grepl("contain missing values", e$message)) {
+        showNotification(
+          "Error: No enriched KEGG terms found.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+  
+  
+  
+  ### Fold Change definition for KEGG
   
   
   fold_change_geneList_KEGG <- reactive({ 
@@ -7749,12 +8958,12 @@ server <- function(input, output) {
     
     if (infile == "Deseq2") {
       
-      fit3 <- cnetplot(EnrichKegg(), showCategory = input$ShowKEGGCategory, color.params = list(foldChange=fold_change_geneListDeseq2_KEGG())) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
+      fit3 <- cnetplot(EnrichKegg(), showCategory = input$ShowKEGGCategory, igraph::layout_in_circle, foldChange=fold_change_geneListDeseq2_KEGG()) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
       fit3
       
     } else {
       
-      fit3 <- cnetplot(EnrichKegg(), showCategory = input$ShowKEGGCategory, color.params = list(foldChange=fold_change_geneList_KEGG())) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
+      fit3 <- cnetplot(EnrichKegg(), showCategory = input$ShowKEGGCategory,  igraph::layout_in_circle, foldChange=fold_change_geneList_KEGG()) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
       fit3
       
     }
@@ -7767,19 +8976,55 @@ server <- function(input, output) {
   
   
   output$KEGGcnetplot21 <- renderPlot({
+    
     infile <- input$KEGGkeytype
-    req(infile)
+    info <- input$NormKegg
+    f <- input$KeyType
+    t <- input$KEGGorganism
+    req(infile,t,f,info)
     
     
-    if (infile == 'Select the database') {
-      data <- NULL
-      
-    } else {
-      data <- KEGGcnetplot2()
+    if (infile == 'Select the database' || t == 'Select the organism' || f == 'Select the Keytype' || info == 'Select the Normalization method') {
+      return(NULL)
     }
-    return(data)
     
-  }, height = "auto", width = "auto", res = 72 )
+    tryCatch({
+      
+      res <- EnrichKegg()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched KEGG terms found.",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      KEGGcnetplot2()
+      
+    }, error = function(e) {
+      
+      if (grepl("contain missing values", e$message)) {
+        showNotification(
+          "Error: No enriched KEGG terms found.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+    
+
   
   
   
@@ -7788,19 +9033,38 @@ server <- function(input, output) {
     infile <- input$NormKegg
     req(infile)
     
-    if (infile == "Deseq2") {
+    tryCatch({
       
-      fit3 <- cnetplot(EnrichKegg(), showCategory = input$ShowKEGGCategory, foldChange=fold_change_geneListDeseq2_KEGG(), circular = TRUE, colorEdge = TRUE) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
-      fit3
+      if (infile == "Deseq2") {
+        
+        fit3 <- cnetplot(EnrichKegg(),showCategory = input$ShowKEGGCategory, foldChange = fold_change_geneListDeseq2_KEGG()) + scale_color_gradientn(name = "Log2 Fold Change",colours = c("#64AC59", "#98D7B7","#325F8C"))
+        
+      } else {
+        
+        fit3 <- cnetplot(EnrichKegg(), showCategory = input$ShowKEGGCategory,foldChange = fold_change_geneList_KEGG()) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
+        
+      }
       
-    } else {
+      return(fit3)
       
-      fit3 <- cnetplot(EnrichKegg(), showCategory = input$ShowKEGGCategory, foldChange=fold_change_geneList_KEGG(), circular = TRUE, colorEdge = TRUE) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
-      fit3
+    }, warning = function(w) {
       
-    }
-    
-    return(fit3)
+      if (grepl("should contain at least two columns", w$message)) {
+        showNotification(
+          "No enriched KEGG terms found.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", w$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
     
   })
   
@@ -7809,19 +9073,56 @@ server <- function(input, output) {
   ## upsetplot ##
   
   output$KEGGupsetplot <- renderPlot({
+    
     infile <- input$KEGGkeytype
-    req(infile)
+    info <- input$NormKegg
+    f <- input$KeyType
+    t <- input$KEGGorganism
+    req(infile,t,f,info)
     
     
-    if (infile == 'Select the database') {
-      fit3 <- NULL
-      
-    } else {
-      fit3 <- upsetplot(EnrichKegg(), n = input$ShowKEGGCategory)
-      fit3
+    if (infile == 'Select the database' || t == 'Select the organism' || f == 'Select the Keytype' || info == 'Select the Normalization method') {
+      return(NULL)
     }
-    return(fit3)
-  },  height = "auto",  width = "auto" , res = 72)
+    
+    tryCatch({
+      
+      res <- EnrichKegg()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched KEGG terms found.",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      upsetplot(EnrichKegg(), n = input$ShowKEGGCategory)
+      
+    }, error = function(e) {
+      
+      if (grepl("undefined columns", e$message)) {
+        showNotification(
+          "Error: No enriched KEGG terms found.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+  
+    
+
   
   ###
   
@@ -7830,18 +9131,55 @@ server <- function(input, output) {
   
   
   output$KEGGheatplot <- renderPlot({
+    
     infile <- input$KEGGkeytype
-    req(infile)
+    info <- input$NormKegg
+    f <- input$KeyType
+    t <- input$KEGGorganism
+    req(infile,t,f,info)
     
     
-    if (infile == 'Select the database') {
-      data <- NULL
-      
-    } else {
-      data <- KEGGHeatplot2()
+    if (infile == 'Select the database' || t == 'Select the organism' || f == 'Select the Keytype' || info == 'Select the Normalization method') {
+      return(NULL)
     }
-    return(data)
-  },  height = "auto",  width = "auto" , res = 72)
+    
+    tryCatch({
+      
+      res <- EnrichKegg()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched KEGG terms found.",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      KEGGHeatplot2()
+      
+    }, error = function(e) {
+      
+      if (grepl("undefined columns", e$message)) {
+        showNotification(
+          "Error: No enriched KEGG terms found.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+    
+
   
   
   
@@ -7880,49 +9218,125 @@ server <- function(input, output) {
   ## emapplot ##
   
   output$KEGGemapplot <- renderPlot({
+    
     infile <- input$KEGGkeytype
-    req(infile)
+    info <- input$NormKegg
+    f <- input$KeyType
+    t <- input$KEGGorganism
+    req(infile,t,f,info)
     
     
-    if (infile == 'Select the database') {
-      fit3 <- NULL
-      
-    } else {
-      fit3 <- emapplot(KEGG_ora_analysis_bp(), showCategory = input$ShowKEGGCategory)
-      fit3
+    if (infile == 'Select the database' || t == 'Select the organism' || f == 'Select the Keytype' || info == 'Select the Normalization method') {
+      return(NULL)
     }
-    return(fit3)
-  },  height = "auto",  width = "auto" , res = 72 )
+    
+    tryCatch({
+      
+      res <- EnrichKegg()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched KEGG terms found",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      emapplot(KEGG_ora_analysis_bp(), showCategory = input$ShowKEGGCategory)
+      
+    }, error = function(e) {
+      
+      if (grepl("error in evaluating", e$message)) {
+        showNotification(
+          "Error: No enriched KEGG terms found.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+    
+    
+
   
   ###
   
   
   
-  
-  ## treeplot ##
   
   output$KEGGtreeplot <- renderPlot({
+    
     infile <- input$KEGGkeytype
-    req(infile)
+    info <- input$NormKegg
+    f <- input$KeyType
+    t <- input$KEGGorganism
+    req(infile,t,f,info)
     
     
-    if (infile == 'Select the database') {
-      fit3 <- NULL
-      
-    } else {
-      fit3 <- treeplot(KEGG_ora_analysis_bp(), showCategory = input$ShowKEGGCategory)
-      fit3
+    if (infile == 'Select the database' || t == 'Select the organism' || f == 'Select the Keytype' || info == 'Select the Normalization method') {
+      return(NULL)
     }
-    return(fit3)
-  },  height = "auto",  width = "auto" , res = 72  )
-  
-  
-  
-  
-  ###
-  
-  
-  
+    
+    tryCatch({
+      
+      withCallingHandlers({
+        
+        fit3 <- treeplot(
+          KEGG_ora_analysis_bp(),
+          showCategory = input$ShowKEGGCategory
+        )
+        fit3
+        
+      }, warning = function(w) {
+        
+        if (grepl("no enriched term found$", w$message)) {
+          showNotification(
+            "Warning: No enriched KEGG terms found.",
+            type = "warning",
+            duration = NULL
+          )
+        }
+        
+        invokeRestart("muffleWarning")
+      })
+      
+    }, error = function(e) {
+      
+      if (grepl("^elements of 'k' must be between", e$message)) {
+        showNotification(
+          grepl("Error: number of clusters (k) is invalid. Adjust 'Number of Categories'.", "Enriched terms might not be found."),
+          type = "error",
+          duration = NULL
+        )
+        
+      } else if (grepl("no enriched term found$", e$message)) {
+        showNotification(
+          paste("No enriched term was found:", e$message),
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
   
   
   ## Enrich KEGG GSEA ####
@@ -8108,20 +9522,57 @@ server <- function(input, output) {
   ## Dotplot ##
   
   output$KEGGdotplotGSEA <- renderPlot({
+    
     infile <- input$KEGGkeytype
-    req(infile)
+    info <- input$NormKegg
+    f <- input$KeyType
+    t <- input$KEGGorganism
+    req(infile,t,f,info)
     
     
-    if (infile == 'Select the database') {
-      fit3 <- NULL
-      
-    } else {
-      
-      fit3 <- dotplot(EnrichKeggGSEA(), showCategory = input$ShowKEGGCategory)
-      fit3
+    if (infile == 'Select the database' || t == 'Select the organism' || f == 'Select the Keytype' || info == 'Select the Normalization method') {
+      return(NULL)
     }
-    return(fit3)
-  },  height = "auto",  width = "auto" , res = 72 )
+    
+    tryCatch({
+      
+      res <- EnrichKeggGSEA()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched KEGG terms found.",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      dotplot(EnrichKeggGSEA(), showCategory = input$ShowKEGGCategory)
+      
+      
+    }, error = function(e) {
+      
+      if (grepl("length zero", e$message)) {
+        showNotification(
+          "Error: No enriched KEGG terms available.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+  
+  
+  
   
   ###
   
@@ -8130,18 +9581,60 @@ server <- function(input, output) {
   ## cnetplot ##
   
   output$KEGGcnetplotGSEA <- renderPlot({
+    
     infile <- input$KEGGkeytype
-    req(infile)
+    info <- input$NormKegg
+    f <- input$KeyType
+    t <- input$KEGGorganism
+    req(infile,t,f,info)
     
     
-    if (infile == 'Select the database') {
-      data <- NULL
-      
-    } else {
-      data <- KEGGcnetplot1GSEA()
+    if (infile == 'Select the database' || t == 'Select the organism' || f == 'Select the Keytype' || info == 'Select the Normalization method') {
+      return(NULL)
     }
-    return(data)
-  }, height = "auto",  width = "auto" , res = 72 )
+    
+    tryCatch({
+      
+      res <- EnrichKeggGSEA()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched KEGG terms found.",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      KEGGcnetplot1GSEA()
+      
+      
+    }, error = function(e) {
+      
+      if (grepl("missing values", e$message)) {
+        showNotification(
+          "Error: No enriched KEGG terms available.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+    
+
+  
+  
+  
+  
   
   
   fold_change_geneList_KEGGGSEA <- reactive({ 
@@ -8165,12 +9658,12 @@ server <- function(input, output) {
     
     if (infile == "Deseq2") {
       
-      fit3 <- cnetplot(EnrichKeggGSEA(), showCategory = input$ShowKEGGCategory, color.params = list(foldChange=fold_change_geneListDeseq2_KEGGGSEA())) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
+      fit3 <- cnetplot(EnrichKeggGSEA(), showCategory = input$ShowKEGGCategory,  igraph::layout_in_circle, foldChange=fold_change_geneListDeseq2_KEGGGSEA()) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
       fit3
       
     } else {
       
-      fit3 <- cnetplot(EnrichKeggGSEA(), showCategory = input$ShowKEGGCategory, color.params = list(foldChange=fold_change_geneList_KEGGGSEA())) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
+      fit3 <- cnetplot(EnrichKeggGSEA(), showCategory = input$ShowKEGGCategory,  igraph::layout_in_circle, foldChange=fold_change_geneList_KEGGGSEA()) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
       fit3
       
     }
@@ -8183,21 +9676,56 @@ server <- function(input, output) {
   
   
   output$KEGGcnetplot21GSEA <- renderPlot({
+    
     infile <- input$KEGGkeytype
-    req(infile)
+    info <- input$NormKegg
+    f <- input$KeyType
+    t <- input$KEGGorganism
+    req(infile,t,f,info)
     
     
-    if (infile == 'Select the database') {
-      data <- NULL
-      
-    } else {
-      data <- KEGGcnetplot2GSEA()
+    if (infile == 'Select the database' || t == 'Select the organism' || f == 'Select the Keytype' || info == 'Select the Normalization method') {
+      return(NULL)
     }
-    return(data)
     
-  }, height = "auto", width = "auto", res = 72 )
+    tryCatch({
+      
+      res <- EnrichKeggGSEA()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched KEGG terms found.",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      KEGGcnetplot2GSEA()
+      
+    }, error = function(e) {
+      
+      if (grepl("missing values", e$message)) {
+        showNotification(
+          "Error: No enriched KEGG terms available.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
   
-  
+    
+
   
   KEGGcnetplot2GSEA <- reactive({
     
@@ -8206,12 +9734,12 @@ server <- function(input, output) {
     
     if (infile == "Deseq2") {
       
-      fit3 <- cnetplot(EnrichKeggGSEA(), showCategory = input$ShowKEGGCategory, foldChange=fold_change_geneListDeseq2_KEGGGSEA(), circular = TRUE, colorEdge = TRUE) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
+      fit3 <- cnetplot(EnrichKeggGSEA(), showCategory = input$ShowKEGGCategory, foldChange=fold_change_geneListDeseq2_KEGGGSEA()) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
       fit3
       
     } else {
       
-      fit3 <- cnetplot(EnrichKeggGSEA(), showCategory = input$ShowKEGGCategory, foldChange=fold_change_geneList_KEGGGSEA(), circular = TRUE, colorEdge = TRUE) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
+      fit3 <- cnetplot(EnrichKeggGSEA(), showCategory = input$ShowKEGGCategory, foldChange=fold_change_geneList_KEGGGSEA()) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
       fit3
       
     }
@@ -8225,19 +9753,55 @@ server <- function(input, output) {
   ## upsetplot ##
   
   output$KEGGupsetplotGSEA <- renderPlot({
+    
     infile <- input$KEGGkeytype
-    req(infile)
+    info <- input$NormKegg
+    f <- input$KeyType
+    t <- input$KEGGorganism
+    req(infile,t,f,info)
     
     
-    if (infile == 'Select the database') {
-      fit3 <- NULL
-      
-    } else {
-      fit3 <- upsetplot(EnrichKeggGSEA(), n = input$ShowKEGGCategory)
-      fit3
+    if (infile == 'Select the database' || t == 'Select the organism' || f == 'Select the Keytype' || info == 'Select the Normalization method') {
+      return(NULL)
     }
-    return(fit3)
-  },  height = "auto",  width = "auto" , res = 72)
+    
+    tryCatch({
+      
+      res <- EnrichKeggGSEA()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched KEGG terms found.",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      upsetplot(EnrichKeggGSEA(), n = input$ShowKEGGCategory)
+      
+    }, error = function(e) {
+      
+      if (grepl("undefined columns", e$message)) {
+        showNotification(
+          "Error: No enriched KEGG terms available.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+    
+
   
   ###
   
@@ -8246,18 +9810,57 @@ server <- function(input, output) {
   
   
   output$KEGGheatplotGSEA <- renderPlot({
+    
     infile <- input$KEGGkeytype
-    req(infile)
+    info <- input$NormKegg
+    f <- input$KeyType
+    t <- input$KEGGorganism
+    req(infile,t,f,info)
     
     
-    if (infile == 'Select the database') {
-      data <- NULL
-      
-    } else {
-      data <- KEGGHeatplot2GSEA()
+    if (infile == 'Select the database' || t == 'Select the organism' || f == 'Select the Keytype' || info == 'Select the Normalization method') {
+      return(NULL)
     }
-    return(data)
-  },  height = "auto",  width = "auto" , res = 72)
+    
+    tryCatch({
+      
+      res <- EnrichKeggGSEA()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched KEGG terms found.",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      KEGGHeatplot2GSEA()
+      
+      
+    }, error = function(e) {
+      
+      if (grepl("undefined columns", e$message)) {
+        showNotification(
+          "Error: No enriched KEGG terms available.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+
+  
+  
   
   
   
@@ -8296,20 +9899,56 @@ server <- function(input, output) {
   ## emapplot ##
   
   output$KEGGemapplotGSEA <- renderPlot({
+    
     infile <- input$KEGGkeytype
-    req(infile)
+    info <- input$NormKegg
+    f <- input$KeyType
+    t <- input$KEGGorganism
+    req(infile,t,f,info)
     
     
-    if (infile == 'Select the database') {
-      fit3 <- NULL
-      
-    } else {
-      fit3 <- emapplot(KEGG_ora_analysis_bp_GSEA(), showCategory = input$ShowKEGGCategory)
-      fit3
+    if (infile == 'Select the database' || t == 'Select the organism' || f == 'Select the Keytype' || info == 'Select the Normalization method') {
+      return(NULL)
     }
-    return(fit3)
-  },  height = "auto",  width = "auto" , res = 72 )
-  
+    
+    tryCatch({
+      
+      res <- EnrichKeggGSEA()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched KEGG terms found.",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      emapplot(KEGG_ora_analysis_bp_GSEA(), showCategory = input$ShowKEGGCategory)
+      
+      
+    }, error = function(e) {
+      
+      if (grepl("error in evaluating", e$message)) {
+        showNotification(
+          "Error: No enriched KEGG terms available.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+    
+
   ###
   
   
@@ -8318,20 +9957,55 @@ server <- function(input, output) {
   ## treeplot ##
   
   output$KEGGtreeplotGSEA <- renderPlot({
+    
     infile <- input$KEGGkeytype
-    req(infile)
+    info <- input$NormKegg
+    f <- input$KeyType
+    t <- input$KEGGorganism
+    req(infile,t,f,info)
     
     
-    if (infile == 'Select the database') {
-      fit3 <- NULL
-      
-    } else {
-      fit3 <- treeplot(KEGG_ora_analysis_bp_GSEA(), showCategory = input$ShowKEGGCategory)
-      fit3
+    if (infile == 'Select the database' || t == 'Select the organism' || f == 'Select the Keytype' || info == 'Select the Normalization method') {
+      return(NULL)
     }
-    return(fit3)
-  },  height = "auto",  width = "auto" , res = 72  )
-  
+    
+    tryCatch({
+      
+      res <- EnrichKeggGSEA()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched KEGG terms found.",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      treeplot(KEGG_ora_analysis_bp_GSEA(), showCategory = input$ShowKEGGCategory)
+      
+      
+    }, error = function(e) {
+      
+      if (grepl("error in evaluating", e$message)) {
+        showNotification(
+          "Error: No enriched KEGG terms available.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+    
   
   
   
@@ -8604,57 +10278,190 @@ server <- function(input, output) {
   ## BarPlot ##
   
   output$KEGGbarplot_Shannon <- renderPlot({
+    
     infile <- input$KEGGkeytype
-    req(infile)
+    info <- input$NormKegg
+    f <- input$KeyType
+    t <- input$KEGGorganism
+    req(infile,t,f,info)
     
     
-    if (infile == 'Select the database') {
-      data <- NULL
-      
-    } else {
-      data <- plot(barplot(EnrichKeggShannon(), showCategory = input$ShowKEGGCategory)) # slider option
+    if (infile == 'Select the database' || t == 'Select the organism' || f == 'Select the Keytype' || info == 'Select the Normalization method') {
+      return(NULL)
     }
-    return(data)
-  },  height = "auto",  width = "auto" , res = 72 )
+    
+    tryCatch({
+      
+      res <- EnrichKeggShannon()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched KEGG terms found with SEA.",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      barplot(EnrichKeggShannon(), showCategory = input$ShowKEGGCategory)
+      
+      
+    }, error = function(e) {
+      
+      if (grepl("length zero", e$message)) {
+        showNotification(
+          "Error: No enriched KEGG terms available for SEA.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else if (grepl("evaluating the argument", e$message)) {
+        showNotification(
+          "Error: The SEA analysis was not performed. Go to 'Differential Gene Expression Analysis' section to perform SEA analysis.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+  
   
   
   ###
+
   
   ## Goplot ##
   
   output$KEGGgoplot_Shannon <- renderPlot({
+    
     infile <- input$KEGGkeytype
-    req(infile)
+    info <- input$NormKegg
+    f <- input$KeyType
+    t <- input$KEGGorganism
+    req(infile,t,f,info)
     
     
-    if (infile == 'Select the database') {
-      data <- NULL
-      
-    } else {
-      data <- plot(goplot(EnrichKeggShannon(), showCategory = input$ShowKEGGCategory))
+    if (infile == 'Select the database' || t == 'Select the organism' || f == 'Select the Keytype' || info == 'Select the Normalization method') {
+      return(NULL)
     }
-    return(data)
-  },  height = "auto",  width = "auto" , res = 72 )
-  
+    
+    tryCatch({
+      res <- EnrichKeggShannon()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched KEGG terms found with SEA.",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      goplot(EnrichKeggShannon(), showCategory = input$ShowKEGGCategory)
+      
+    }, error = function(e) {
+      
+      if (grepl("the data frame should contain at least two columns", e$message)) {
+        showNotification(
+          "Error: No enriched KEGG terms available with SEA.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else if (grepl("evaluating the argument", e$message)) {
+        showNotification(
+          "Error: The SEA analysis was not performed. Go to 'Differential Gene Expression Analysis' section to perform SEA analysis.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+    
+
   ###
+  
   
   
   ## Dotplot ##
   
   output$KEGGdotplot_Shannon <- renderPlot({
+    
     infile <- input$KEGGkeytype
-    req(infile)
+    info <- input$NormKegg
+    f <- input$KeyType
+    t <- input$KEGGorganism
+    req(infile,t,f,info)
     
     
-    if (infile == 'Select the database') {
-      fit3 <- NULL
-      
-    } else {
-      fit3 <- dotplot(EnrichKeggShannon(), showCategory = input$ShowKEGGCategory)
-      
+    if (infile == 'Select the database' || t == 'Select the organism' || f == 'Select the Keytype' || info == 'Select the Normalization method') {
+      return(NULL)
     }
-    return(fit3)
-  },  height = "auto",  width = "auto" , res = 72 )
+    
+    tryCatch({
+      
+      res <- EnrichKeggShannon()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched KEGG terms found with SEA.",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      dotplot(
+        res,
+        showCategory = input$ShowKEGGCategory
+      )
+      
+    }, error = function(e) {
+      
+      if (grepl("length zero", e$message)) {
+        showNotification(
+          "Error: No enriched KEGG terms available for SEA.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else if (grepl("evaluating the argument", e$message)) {
+        showNotification(
+          "Error: The SEA analysis was not performed. Go to 'Differential Gene Expression Analysis' section to perform SEA analysis.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+    
   
   ###
   
@@ -8686,19 +10493,46 @@ server <- function(input, output) {
     infile <- input$NormKegg
     req(infile)
     
-    if (infile == "Deseq2") {
+    tryCatch({
       
-      fit3 <- cnetplot(EnrichKeggShannon(), showCategory = input$ShowKEGGCategory, color.params = list(foldChange=fold_change_geneListDeseq2_KEGG_Shannon())) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
-      fit3
+      if (infile == "Deseq2") {
+        
+        fit3 <- cnetplot(EnrichKeggShannon(), showCategory = input$ShowKEGGCategory, igraph::layout_in_circle, foldChange = fold_change_geneListDeseq2_KEGG_Shannon()) + scale_color_gradientn(name = "Log2 Fold Change",colours = c("#64AC59", "#98D7B7","#325F8C") )
+        
+      } else {
+        
+        fit3 <- cnetplot(EnrichKeggShannon(), showCategory = input$ShowKEGGCategory, igraph::layout_in_circle,  foldChange = fold_change_geneList_KEGG_Shannon() ) +  scale_color_gradientn(name = "Log2 Fold Change",colours = c("#64AC59", "#98D7B7","#325F8C") )
+        
+      }
       
-    } else {
+      return(fit3)
       
-      fit3 <- cnetplot(EnrichKeggShannon(), showCategory = input$ShowKEGGCategory, color.params = list(foldChange=fold_change_geneList_KEGG_Shannon())) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
-      fit3
+    }, error = function(e) {
       
-    }
-    
-    return(fit3)
+      if (grepl("contain missing values", e$message)) {
+        showNotification(
+          "No enriched terms available for KEGG SEA cnetplot.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else if (grepl("evaluating the argument", e$message)) {
+        showNotification(
+          "Error: The SEA analysis was not performed. Go to 'Differential Gene Expression Analysis' section to perform SEA analysis.",
+          type = "error",
+          duration = NULL
+        )
+        
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
     
   })
   
@@ -8724,44 +10558,117 @@ server <- function(input, output) {
   
   KEGG_Shannoncnetplot2 <- reactive({
     
+    
     infile <- input$NormKegg
-    req(infile)
+    info <- input$NormKegg
+    f <- input$KeyType
+    req(infile,f,info)
     
-    if (infile == "Deseq2") {
+    tryCatch({
       
-      fit3 <- cnetplot(EnrichKeggShannon(), showCategory = input$ShowKEGGCategory, foldChange=fold_change_geneListDeseq2_KEGG_Shannon(), circular = TRUE, colorEdge = TRUE) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
-      fit3
+      if (infile == "Deseq2") {
+        
+        fit3 <-  cnetplot(EnrichKeggShannon(),showCategory = input$ShowKEGGCategory, foldChange=fold_change_geneListDeseq2_KEGG_Shannon()) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
+        
+      } else {
+        
+        fit3 <- cnetplot(EnrichKeggShannon(), showCategory = input$ShowKEGGCategory, foldChange=fold_change_geneList_KEGG_Shannon()) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
+        
+      }
       
-    } else {
+      return(fit3)
       
-      fit3 <- cnetplot(EnrichKeggShannon(), showCategory = input$ShowKEGGCategory, foldChange=fold_change_geneList_KEGG_Shannon(), circular = TRUE, colorEdge = TRUE) + scale_color_gradientn(name = "Log2 Fold Change", colours = c("#64AC59", "#98D7B7","#325F8C"))
-      fit3
+    }, error = function(e) {
       
-    }
-    
-    return(fit3)
+      if (grepl("contain missing values", e$message)) {
+        showNotification(
+          "No enriched KEGG terms available for SEA cnetplot.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else if (grepl("evaluating the argument", e$message)) {
+        showNotification(
+          "Error: The SEA analysis was not performed. Go to 'Differential Gene Expression Analysis' section to perform SEA analysis.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
     
   })
+  
+  
   
   
   
   ## upsetplot ##
   
   output$KEGGupsetplot_Shannon <- renderPlot({
+    
     infile <- input$KEGGkeytype
-    req(infile)
+    info <- input$NormKegg
+    f <- input$KeyType
+    t <- input$KEGGorganism
+    req(infile,t,f,info)
     
     
-    if (infile == 'Select the database') {
-      fit3 <- NULL
-      
-    } else {
-      
-      fit3 <- upsetplot(EnrichKeggShannon(), n = input$ShowKEGGCategory)
-      
+    if (infile == 'Select the database' || t == 'Select the organism' || f == 'Select the Keytype' || info == 'Select the Normalization method') {
+      return(NULL)
     }
-    return(fit3)
-  },  height = "auto",  width = "auto" , res = 72)
+    
+    tryCatch({
+      
+      res <- EnrichKeggShannon()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched KEGG terms found with SEA.",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      upsetplot(EnrichKeggShannon(), n = input$ShowKEGGCategory)
+      
+    }, error = function(e) {
+      
+      if (grepl("undefined columns", e$message)) {
+        showNotification(
+          "Error: No enriched terms available for KEGG SEA.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else if (grepl("evaluating the argument", e$message)) {
+        showNotification(
+          "Error: The SEA analysis was not performed. Go to 'Differential Gene Expression Analysis' section to perform SEA analysis.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+  
+    
   
   ###
   
@@ -8770,19 +10677,63 @@ server <- function(input, output) {
   
   
   output$KEGGheatplot_Shannon <- renderPlot({
+    
     infile <- input$KEGGkeytype
-    req(infile)
+    info <- input$NormKegg
+    f <- input$KeyType
+    t <- input$KEGGorganism
+    req(infile,t,f,info)
     
     
-    if (infile == 'Select the database') {
-      data <- NULL
-      
-    } else {
-      data <- KEGG_ShannonHeatplot2()
+    if (infile == 'Select the database' || t == 'Select the organism' || f == 'Select the Keytype' || info == 'Select the Normalization method') {
+      return(NULL)
     }
-    return(data)
     
-  },  height = "auto",  width = "auto" , res = 72)
+    tryCatch({
+      
+      res <- EnrichKeggShannon()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched KEGG terms found with SEA.",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      KEGG_ShannonHeatplot2()
+      
+    
+    }, error = function(e) {
+      
+      if (grepl("undefined columns", e$message)) {
+        showNotification(
+          "Error: No enriched KEGG terms available for SEA.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else if (grepl("evaluating the argument", e$message)) {
+        showNotification(
+          "Error: The SEA analysis was not performed. Go to 'Differential Gene Expression Analysis' section to perform SEA analysis.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+  
+  }, height = "auto", width = "auto", res = 72)
+
+  
   
   
   
@@ -8822,19 +10773,63 @@ server <- function(input, output) {
   ## emapplot ##
   
   output$KEGGemapplot_Shannon <- renderPlot({
+    
     infile <- input$KEGGkeytype
-    req(infile)
+    info <- input$NormKegg
+    f <- input$KeyType
+    t <- input$KEGGorganism
+    req(infile,t,f,info)
     
     
-    if (infile == 'Select the database') {
-      fit3 <- NULL
-      
-    } else {
-      fit3 <- emapplot(KEGG_ora_analysis_bp_Shannon(), showCategory = input$ShowKEGGCategory)
-      
+    if (infile == 'Select the database' || t == 'Select the organism' || f == 'Select the Keytype' || info == 'Select the Normalization method') {
+      return(NULL)
     }
-    return(fit3)
-  },  height = "auto",  width = "auto" , res = 72 )
+    
+    tryCatch({
+      
+      res <- EnrichKeggShannon()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched KEGG terms found with SEA",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      emapplot(KEGG_ora_analysis_bp_Shannon(), showCategory = input$ShowKEGGCategory)
+      
+      
+    }, error = function(e) {
+      
+      if (grepl("error in evaluating", e$message)) {
+        showNotification(
+          "Error: No enriched KEGG terms available for SEA.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else if (grepl("evaluating the argument", e$message)) {
+        showNotification(
+          "Error: The SEA analysis was not performed. Go to 'Differential Gene Expression Analysis' section to perform SEA analysis.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+    
+    
   
   ###
   
@@ -8844,26 +10839,62 @@ server <- function(input, output) {
   ## treeplot ##
   
   output$KEGGtreeplot_Shannon <- renderPlot({
+    
     infile <- input$KEGGkeytype
-    req(infile)
+    info <- input$NormKegg
+    f <- input$KeyType
+    t <- input$KEGGorganism
+    req(infile,t,f,info)
     
     
-    if (infile == 'Select the database') {
-      fit3 <- NULL
-      
-    } else {
-      
-      fit3 <- treeplot(KEGG_ora_analysis_bp_Shannon(), showCategory = input$ShowKEGGCategory)
+    if (infile == 'Select the database' || t == 'Select the organism' || f == 'Select the Keytype' || info == 'Select the Normalization method') {
+      return(NULL)
     }
-    return(fit3)
-  },  height = "auto",  width = "auto" , res = 72  )
-  
-  
-  
-  
-  
-  
-  
+    
+    tryCatch({
+      
+      res <- EnrichKeggShannon()
+      
+      if (is.null(res) || nrow(as.data.frame(res)) == 0) {
+        showNotification(
+          "Error: No enriched KEGG terms found with SEA.",
+          type = "error",
+          duration = NULL
+        )
+        return(NULL)
+      }
+      
+      treeplot(KEGG_ora_analysis_bp_Shannon(), showCategory = input$ShowKEGGCategory)
+      
+      
+    }, error = function(e) {
+      
+      if (grepl("error in evaluating", e$message)) {
+        showNotification(
+          "Error: No enriched KEGG terms available for SEA.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else if (grepl("evaluating the argument", e$message)) {
+        showNotification(
+          "Error: The SEA analysis was not performed. Go to 'Differential Gene Expression Analysis' section to perform SEA analysis.",
+          type = "error",
+          duration = NULL
+        )
+        
+      } else {
+        showNotification(
+          paste("Unexpected error:", e$message),
+          type = "error"
+        )
+      }
+      
+      return(NULL)
+    })
+    
+  }, height = "auto", width = "auto", res = 72)
+    
   
   
   ###
@@ -9059,173 +11090,94 @@ server <- function(input, output) {
     req(infile)
     
     if (infile == "Deseq2") {
-
-      Data <- plot_ly(data = resdeseq11(), 
-                      x = ~log2FoldChange, 
-                      y = ~(-log10(padj)), 
-                      color = ~regulated, 
-                      colors = c("down" = "#9370DB", 
-                                 "Not differentially expressed" = "#E0EEEE", 
-                                 "up" = "#FFA54F"),
-                      text = ~RefSeq, 
-                      type = 'scatter', 
-                      mode = 'markers',
-                      marker = list(size = 7)) %>%
-        layout(title = "Volcano Plot",
-               xaxis = list(title = "log2 Fold Change"),
-               yaxis = list(title = "-log10(padj)"),
-               showlegend = TRUE)
+      DataForVolcano <- 
+        ggplot(data=resdeseq11(), aes(x=log2FoldChange, y=-log10(padj), color = regulated, text = RefSeq)) + geom_point() + theme_minimal() + scale_color_manual(values = c("down" ="#9370DB", "Not differentially expressed"= "#E0EEEE", "up" = "#FFA54F")) + theme(legend.position = "none") # + geom_text(label=res11()$RefSeq, nudge_x=0.85, nudge_y=0.2, check_overlap=T) 
       
+      Data <-  DataForVolcano +  ylab("-log10(FDR)")
+      
+    } else if (infile == "Select the Normalization method") {  
+      
+      Data <- NULL
       
     } else if (infile == "RLE") {
       
-      Data <- plot_ly(data = resRLE11(), 
-                      x = ~logFC,
-                      y = ~(-log10(FDR)),  
-                      color = ~regulated, 
-                      colors = c("down" = "#9370DB", 
-                                 "Not differentially expressed" = "#E0EEEE", 
-                                 "up" = "#FFA54F"),
-                      text = ~RefSeq, 
-                      type = 'scatter', 
-                      mode = 'markers',
-                      marker = list(size = 7)) %>%
-        layout(title = "Volcano Plot",
-               xaxis = list(title = "log2 Fold Change"),
-               yaxis = list(title = "-log10(padj)"),
-               showlegend = TRUE)
+      DataForVolcano <-
+        ggplot(data=resRLE11(), aes(x=logFC, y=-log10(FDR), color = regulated, text = RefSeq)) + geom_point() + theme_minimal() + scale_color_manual(values = c("down" ="#9370DB", "Not differentially expressed"= "#E0EEEE", "up" = "#FFA54F")) + theme(legend.position = "none") # + geom_text(label=res11()$RefSeq, nudge_x=0.85, nudge_y=0.2, check_overlap=T) 
+      
+      Data <-  DataForVolcano +  xlab("log2FoldChange")
       
       
     } else if (infile == "Upper Quartile") {
       
-      Data <- plot_ly(data = resUQ11(), 
-                      x = ~logFC,
-                      y = ~(-log10(FDR)),  
-                      color = ~regulated, 
-                      colors = c("down" = "#9370DB", 
-                                 "Not differentially expressed" = "#E0EEEE", 
-                                 "up" = "#FFA54F"),
-                      text = ~RefSeq, 
-                      type = 'scatter', 
-                      mode = 'markers',
-                      marker = list(size = 7)) %>%
-        layout(title = "Volcano Plot",
-               xaxis = list(title = "log2 Fold Change"),
-               yaxis = list(title = "-log10(padj)"),
-               showlegend = TRUE)
+      DataForVolcano <-
+        ggplot(data=resUQ11(), aes(x=logFC, y=-log10(FDR), color = regulated, text = RefSeq)) + geom_point() + theme_minimal() + scale_color_manual(values = c("down" ="#9370DB", "Not differentially expressed"= "#E0EEEE", "up" = "#FFA54F")) + theme(legend.position = "none") # + geom_text(label=res11()$RefSeq, nudge_x=0.85, nudge_y=0.2, check_overlap=T) 
       
+      Data <-  DataForVolcano +  xlab("log2FoldChange")
       
       
     } else if (infile == "TMM") {
       
-      Data <- plot_ly(data = resTMM11(), 
-                      x = ~logFC,
-                      y = ~(-log10(FDR)),  
-                      color = ~regulated, 
-                      colors = c("down" = "#9370DB", 
-                                 "Not differentially expressed" = "#E0EEEE", 
-                                 "up" = "#FFA54F"),
-                      text = ~RefSeq, 
-                      type = 'scatter', 
-                      mode = 'markers',
-                      marker = list(size = 7)) %>%
-        layout(title = "Volcano Plot",
-               xaxis = list(title = "log2 Fold Change"),
-               yaxis = list(title = "-log10(padj)"),
-               showlegend = TRUE)
+      DataForVolcano <-
+        ggplot(data=resTMM11(), aes(x=logFC, y=-log10(FDR), color = regulated, text = RefSeq)) + geom_point() + theme_minimal() + scale_color_manual(values = c("down" ="#9370DB", "Not differentially expressed"= "#E0EEEE", "up" = "#FFA54F")) + theme(legend.position = "none") # + geom_text(label=res11()$RefSeq, nudge_x=0.85, nudge_y=0.2, check_overlap=T) 
+      
+      Data <-  DataForVolcano +  xlab("log2FoldChange")
       
     } else if (infile == "TMMwsp") {
       
-      Data <- plot_ly(data = resTMMwsp11(), 
-                      x = ~logFC,
-                      y = ~(-log10(FDR)),  
-                      color = ~regulated, 
-                      colors = c("down" = "#9370DB", 
-                                 "Not differentially expressed" = "#E0EEEE", 
-                                 "up" = "#FFA54F"),
-                      text = ~RefSeq, 
-                      type = 'scatter', 
-                      mode = 'markers',
-                      marker = list(size = 7)) %>%
-        layout(title = "Volcano Plot",
-               xaxis = list(title = "log2 Fold Change"),
-               yaxis = list(title = "-log10(padj)"),
-               showlegend = TRUE)
+      DataForVolcano <- 
+        ggplot(data=resTMMwsp11(), aes(x=logFC, y=-log10(FDR), color = regulated, text = RefSeq)) + geom_point() + theme_minimal() + scale_color_manual(values = c("down" ="#9370DB", "Not differentially expressed"= "#E0EEEE", "up" = "#FFA54F")) + theme(legend.position = "none") # + geom_text(label=res11()$RefSeq, nudge_x=0.85, nudge_y=0.2, check_overlap=T) 
+      
+      Data <-  DataForVolcano +  xlab("log2FoldChange")
       
       
     } else if (infile == "PoissonSeq") {
       
-      Data <- plot_ly(data = resPoissonSeq11(), 
-                      x = ~logFC,
-                      y = ~(-log10(FDR)),  
-                      color = ~regulated, 
-                      colors = c("down" = "#9370DB", 
-                                 "Not differentially expressed" = "#E0EEEE", 
-                                 "up" = "#FFA54F"),
-                      text = ~RefSeq, 
-                      type = 'scatter', 
-                      mode = 'markers',
-                      marker = list(size = 7)) %>%
-        layout(title = "Volcano Plot",
-               xaxis = list(title = "log2 Fold Change"),
-               yaxis = list(title = "-log10(padj)"),
-               showlegend = TRUE)
-
+      DataForVolcano <- 
+        ggplot(data=resPoissonSeq11(), aes(x=logFC, y=-log10(FDR), color = regulated, text = RefSeq)) + geom_point() + theme_minimal() + scale_color_manual(values = c("down" ="#9370DB", "Not differentially expressed"= "#E0EEEE", "up" = "#FFA54F")) + theme(legend.position = "none") # + geom_text(label=res11()$RefSeq, nudge_x=0.85, nudge_y=0.2, check_overlap=T) 
+      
+      Data <-  DataForVolcano +  xlab("log2FoldChange")
+      
+    } else if (infile == "SVA") {
+      
+      DataForVolcano <- 
+        ggplot(data=resSVA11(), aes(x=logFC, y=-log10(FDR), color = regulated, text = RefSeq)) + geom_point() + theme_minimal() + scale_color_manual(values = c("down" ="#9370DB", "Not differentially expressed"= "#E0EEEE", "up" = "#FFA54F")) + theme(legend.position = "none") # + geom_text(label=res11()$RefSeq, nudge_x=0.85, nudge_y=0.2, check_overlap=T) 
+      
+      Data <-  DataForVolcano +  xlab("log2FoldChange")
       
     } else if (infile == "Median") {
       
-      Data <- plot_ly(data = resMedian11(), 
-                      x = ~logFC,
-                      y = ~(-log10(FDR)),   
-                      color = ~regulated, 
-                      colors = c("down" = "#9370DB", 
-                                 "Not differentially expressed" = "#E0EEEE", 
-                                 "up" = "#FFA54F"),
-                      text = ~RefSeq, 
-                      type = 'scatter', 
-                      mode = 'markers',
-                      marker = list(size = 7)) %>%
-        layout(title = "Volcano Plot",
-               xaxis = list(title = "log2 Fold Change"),
-               yaxis = list(title = "-log10(padj)"),
-               showlegend = TRUE)
+      DataForVolcano <- 
+        ggplot(data=resMedian11(), aes(x=logFC, y=-log10(FDR), color = regulated, text = RefSeq)) + geom_point() + theme_minimal() + scale_color_manual(values = c("down" ="#9370DB", "Not differentially expressed"= "#E0EEEE", "up" = "#FFA54F")) + theme(legend.position = "none") # + geom_text(label=res11()$RefSeq, nudge_x=0.85, nudge_y=0.2, check_overlap=T) 
       
+      Data <-  DataForVolcano +  xlab("log2FoldChange")
+      
+    } else if (infile == "Cyclic loess") {
+      
+      DataForVolcano <- 
+        ggplot(data=resCloess11(), aes(x=logFC, y=-log10(FDR), color = regulated, text = RefSeq)) + geom_point() + theme_minimal() + scale_color_manual(values = c("down" ="#9370DB", "Not differentially expressed"= "#E0EEEE", "up" = "#FFA54F")) + theme(legend.position = "none") # + geom_text(label=res11()$RefSeq, nudge_x=0.85, nudge_y=0.2, check_overlap=T) 
+      
+      Data <-  DataForVolcano +  xlab("log2FoldChange")
+      
+    } else if (infile == "loess") {
+      
+      DataForVolcano <- 
+        ggplot(data=resloess111(), aes(x=logFC, y=-log10(FDR), color = regulated, text = RefSeq)) + geom_point() + theme_minimal() + scale_color_manual(values = c("down" ="#9370DB", "Not differentially expressed"= "#E0EEEE", "up" = "#FFA54F")) + theme(legend.position = "none") # + geom_text(label=res11()$RefSeq, nudge_x=0.85, nudge_y=0.2, check_overlap=T) 
+      
+      Data <-  DataForVolcano +  xlab("log2FoldChange")
       
     } else if (infile == "Quantile") {
-
-      Data <- plot_ly(data = resQuantile11(), 
-                      x = ~logFC,
-                      y = ~(-log10(FDR)),  
-                      color = ~regulated, 
-                      colors = c("down" = "#9370DB", 
-                                 "Not differentially expressed" = "#E0EEEE", 
-                                 "up" = "#FFA54F"),
-                      text = ~RefSeq, 
-                      type = 'scatter', 
-                      mode = 'markers',
-                      marker = list(size = 7)) %>%
-        layout(title = "Volcano Plot",
-               xaxis = list(title = "log2 Fold Change"),
-               yaxis = list(title = "-log10(padj)"),
-               showlegend = TRUE)
+      
+      DataForVolcano <- 
+        ggplot(data=resQuantile11(), aes(x=logFC, y=-log10(FDR), color = regulated, text = RefSeq)) + geom_point() + theme_minimal() + scale_color_manual(values = c("down" ="#9370DB", "Not differentially expressed"= "#E0EEEE", "up" = "#FFA54F")) + theme(legend.position = "none") # + geom_text(label=res11()$RefSeq, nudge_x=0.85, nudge_y=0.2, check_overlap=T) 
+      
+      Data <-  DataForVolcano +  xlab("log2FoldChange")
       
     } else {
       # No Normalization
-      Data <- plot_ly(data = resdeseq11(), 
-                      x = ~log2FoldChange, 
-                      y = ~(-log10(padj)), 
-                              color = ~regulated, 
-                              colors = c("down" = "#9370DB", 
-                                         "Not differentially expressed" = "#E0EEEE", 
-                                         "up" = "#FFA54F"),
-                              text = ~RefSeq, 
-                              type = 'scatter', 
-                              mode = 'markers',
-                              marker = list(size = 7)) %>%
-        layout(title = "Volcano Plot",
-               xaxis = list(title = "log2 Fold Change"),
-               yaxis = list(title = "-log10(padj)"),
-               showlegend = TRUE)
+      DataForVolcano <- 
+        ggplot(data=resNN11(), aes(x=logFC, y=-log10(FDR), color = regulated, text = RefSeq)) + geom_point() + theme_minimal() + scale_color_manual(values = c("down" ="#9370DB", "Not differentially expressed"= "#E0EEEE", "up" = "#FFA54F")) + theme(legend.position = "none") # + geom_text(label=res11()$RefSeq, nudge_x=0.85, nudge_y=0.2, check_overlap=T) 
+      
+      Data <-  DataForVolcano +  xlab("log2FoldChange")
     }
     
     return(Data)
@@ -9236,7 +11188,7 @@ server <- function(input, output) {
   
   
   
-  output$Volcano <-  renderPlotly({ 
+  output$Volcano <-  renderPlotly({
     data <- DataForVolcano()
     data
   })
@@ -9246,20 +11198,47 @@ server <- function(input, output) {
   
   ### Volcano Plot Home Page ####
   
-  output$VolcanoTMM <-  renderPlot({
+  # Trigger warning as soon as the "Differential Gene Expression Analysis" main tab is opened
+  observeEvent(input$main_nav, {
     
+    if (input$main_nav == "Differential Gene Expression Analysis") {
+      
+      if (is.null(input$cont)) {
+        
+        showModal(
+          modalDialog(
+            title = "Required inputs are missing",
+            tagList(
+              tags$p("Data was not uploaded.")),
+            "Please complete the following first:",
+            tags$ol(
+              tags$li("Go to 'Data Input' and upload your dataset.")),
+            easyClose = TRUE
+          )
+        )
+      }
+    }
+  })
+  
+  
+  output$VolcanoTMM <- renderPlot({
     
     infile <- input$cont
     req(infile)
     
+   
+    
     if (is.null(infile)) {
-      data <- NULL
+      return(NULL)
       
     } else {
       
-      d <- ggplot(data=resTMMb(), aes(x=logFC, y=-log10(FDR), color = regulated, text = RefSeq)) + geom_point() + theme_minimal() + scale_color_manual(values = c("down" ="#9370DB", "Not differentially expressed"= "#E0EEEE", "up" = "#FFA54F")) + theme(legend.position = "none") 
-      data <- d +  xlab("log2FoldChange")
+      d <- ggplot(data = resTMMb(), aes(x = logFC,y = -log10(FDR),color = regulated,text = RefSeq)) + geom_point() + theme_minimal() + scale_color_manual(
+          values = c("down" = "#9370DB","Not differentially expressed" = "#E0EEEE","up" = "#FFA54F")) +theme(legend.position = "none")
+      
+      data <- d + xlab("log2FoldChange")
     }
+    
     return(data)
   })
   
@@ -9278,6 +11257,8 @@ server <- function(input, output) {
     }
     return(data)
   })
+  
+  
   
   output$VolcanoRLE <-  renderPlot({
     
@@ -10391,26 +12372,29 @@ server <- function(input, output) {
       
     } else {
       
-      data <- ggVennDiagram(PlotVenn2(), label = "count")
+      p <- ggVennDiagram(PlotVenn2(), label = "count")
       
-      #data
-      
-      f <- ggvenn(PlotVenn2(), show_elements = F, label_sep = "\n", fill_color = c("#AE123A","#1C65A3"), text_size = 6, count_column = T)
-      
-      f }
-    return(f)
+      #f <- ggvenn(PlotVenn2(), show_elements = F, label_sep = "\n", fill_color = c("#AE123A","#1C65A3"), text_size = 6, count_column = T)
+      #f
+      data <- p +  scale_x_continuous(expand = expansion(mult = .1)) + scale_fill_distiller(palette = "RdBu") 
+      data
+      }
+    return(data)
+    
   })
   
   
   
+  
 
+  
   
   ##### Logo Image of GeneSEA Explorer #####
   
   # add output in server
   output$home_img <- renderImage({
     
-    list(src = "official_banner.png",
+    list(src = "www/official_banner.png",
          width = "100%", height = "80%")
     
   }, deleteFile = F)
