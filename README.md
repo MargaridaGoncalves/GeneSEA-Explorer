@@ -19,7 +19,9 @@ More info on the usage of the application and some examples are detailed in the 
 
 
 > [!WARNING]  
-> GeneSEA Explorer currently supports version 4.3.3 and up to the current the R version 4.5.0.
+> GeneSEA Explorer currently supports version 4.3.3 and up to the current the R version 4.4.3.
+
+> Install compatible [R version](https://cran.r-project.org/bin/windows/base/old/) 
 
 > [!IMPORTANT]  
 > In RStudio open the Session in the GeneSEA Explorer folder.  
@@ -35,8 +37,8 @@ Introduce in the Rstudio Console the following:
 ```r
 # Package names
 packages <- c("plotly", "DT", "shiny", "ggplot2", "dplyr", "readxl","R.utils","readr","bslib", "utils", "combinat", "waiter",
-              "tidyverse", "inops","densityClust","wesanderson","paletteer", "devtools", "shinyBS","gprofiler2",
-              "ggupset", "shinyWidgets","shinythemes","GGally","ggbump", "genekitr", "ggVennDiagram","ggvenn","RColorBrewer","extrafont")
+              "tidyverse", "inops","densityClust","wesanderson","paletteer", "devtools", "shinyBS","gprofiler2","ggarchery",
+              "ggupset", "shinyWidgets","shinythemes","shinyjs","shinyFeedback","GGally", "genekitr", "ggVennDiagram","ggvenn","RColorBrewer","extrafont")
 
 # Install packages not yet installed
 installed_packages <- packages %in% rownames(installed.packages())
@@ -51,8 +53,8 @@ if (!require("BiocManager", quietly = TRUE))
 
 
 install.packages(c("plotly", "DT", "shiny", "ggplot2", "dplyr", "readxl","R.utils","readr","bslib", "utils", "combinat","waiter",
-                   "tidyverse", "inops","densityClust","wesanderson","paletteer", "devtools", "shinyBS","gprofiler2",
-                   "ggupset", "shinyWidgets","shinythemes","GGally","ggbump", "genekitr", "ggVennDiagram","ggvenn","RColorBrewer","extrafont"))
+                   "tidyverse", "inops","densityClust","wesanderson","paletteer", "devtools", "shinyBS","gprofiler2","ggarchery",
+                   "ggupset", "shinyWidgets","shinythemes","shinyjs","shinyFeedback","GGally", "genekitr", "ggVennDiagram","ggvenn","RColorBrewer","extrafont"))
 
 
 
@@ -91,9 +93,25 @@ invisible(lapply(BiocManagerpackages, library, character.only = TRUE))
 ## Author contributions 
 Ana M. Gonçalves was the main developer, with support from the remaining authors. All authors revised the user's guide.
 
+## GeneSEA Explorer Preview
+
+### Data Input
+![](Videos/Data%20Input.gif)
 
 
+### Volcano Plots
+![](Videos/Volcano%20Plots.gif)
 
+
+### DGE Analysis
+![](Videos/DGE.gif)
+
+
+### Shannon's Entropy Aggregation (SEA)
+![](Videos/SEA.gif)
+
+### Functional Enrichment Analysis
+![](Videos/Functional%20Enrichment%20Analysis.gif)
 
 
 
